@@ -1,5 +1,6 @@
 import base64
 import asyncio
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -17,6 +18,74 @@ def _safe_str(x: Any) -> str:
         return str(x)
     except Exception:
         return repr(x)
+
+
+_MONTHS_ES = {
+    1: "Ene",
+    2: "Feb",
+    3: "Mar",
+    4: "Abr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Ago",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dic",
+}
+
+
+def _format_date_dd_mmm_yyyy(value: Any) -> str | None:
+    """
+    Format ISO-like date/datetime strings to:
+    - `DD MMM YYYY` (e.g., `16 Dic 2025`) when no time is present
+    - `DD MMM YYYY HH:mm` (e.g., `16 Dic 2025 06:20`) when time is present
+
+    Returns None when the input can't be parsed as a date.
+    """
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+
+    has_time = ("T" in s) or (":" in s) or (len(s) > 10)
+
+    # Handle common OpenProject formats:
+    # - 2025-12-16T06:20:28.683Z
+    # - 2025-12-16T06:20:28Z
+    # - 2025-12-16
+    try:
+        normalized = s.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        month = _MONTHS_ES.get(dt.month, str(dt.month))
+        if has_time:
+            return f"{dt.day:02d} {month} {dt.year:04d} {dt.hour:02d}:{dt.minute:02d}"
+        return f"{dt.day:02d} {month} {dt.year:04d}"
+    except Exception:
+        try:
+            d = datetime.strptime(s[:10], "%Y-%m-%d")
+            month = _MONTHS_ES.get(d.month, str(d.month))
+            return f"{d.day:02d} {month} {d.year:04d}"
+        except Exception:
+            return None
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    try:
+        normalized = s.replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized)
+    except Exception:
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d")
+        except Exception:
+            return None
 
 
 def _summarize_text(text: str, *, max_len: int = 180) -> str:
@@ -117,6 +186,13 @@ def _display_or_no_data(value: Any) -> Any:
     return value
 
 
+def _display_date_or_no_data(value: Any) -> str:
+    formatted = _format_date_dd_mmm_yyyy(value)
+    if formatted is not None:
+        return formatted
+    return str(_display_or_no_data(value))
+
+
 async def _count_work_packages(*, project_id: int, status: str = "all") -> tuple[int | None, dict[str, Any] | None]:
     """
     Best-effort count of work packages for a project.
@@ -162,8 +238,8 @@ def _project_preview(item: dict[str, Any]) -> dict[str, Any]:
         "active": item.get("active"),
         "public": item.get("public"),
         "description_raw": description_value,
-        "createdAt": _display_or_no_data(item.get("createdAt")),
-        "updatedAt": _display_or_no_data(item.get("updatedAt")),
+        "createdAt": _display_date_or_no_data(item.get("createdAt")),
+        "updatedAt": _display_date_or_no_data(item.get("updatedAt")),
     }
 
 
@@ -233,6 +309,19 @@ def _work_package_status_from_item(item: dict[str, Any]) -> str:
 
 def _extract_cost_total(item: dict[str, Any]) -> str:
     # Best-effort: different OpenProject setups expose costs differently (or not at all).
+    # Prefer "overall" costs when available (labor+materials).
+    for key in (
+        "overallCosts",
+        "overall_costs",
+        "overallCost",
+        "overall_cost",
+    ):
+        v = item.get(key)
+        if isinstance(v, (int, float)):
+            return str(v)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
     for key in ("totalCost", "total_cost", "costTotal", "cost_total", "costsTotal"):
         v = item.get(key)
         if isinstance(v, (int, float)):
@@ -249,6 +338,67 @@ def _extract_cost_total(item: dict[str, Any]) -> str:
                 return str(v)
             if isinstance(v, str) and v.strip():
                 return v.strip()
+
+    # Some OpenProject instances expose budgets/costs via custom fields or nested objects.
+    # We do a conservative deep-scan for cost-like keys, preferring "overall" when present.
+    def score_key(key: str) -> int:
+        k = key.lower().replace("_", "")
+        if "overallcost" in k or ("overall" in k and "cost" in k):
+            return 3
+        if "totalcost" in k or ("total" in k and "cost" in k):
+            return 2
+        if "materialcost" in k or ("material" in k and "cost" in k):
+            return 1
+        if "laborcost" in k or ("labor" in k and "cost" in k):
+            return 1
+        return 0
+
+    def scan(obj: Any, *, depth: int = 0) -> tuple[int, str] | None:
+        if depth > 3:
+            return None
+        if isinstance(obj, dict):
+            best: tuple[int, str] | None = None
+            for k, v in obj.items():
+                key = str(k).lower()
+                if any(token in key for token in ("cost", "costo", "budget", "presupuesto", "price", "amount")):
+                    sc = score_key(str(k))
+                    if isinstance(v, (int, float)):
+                        cand = (sc, str(v))
+                        if best is None or cand[0] > best[0]:
+                            best = cand
+                    if isinstance(v, str) and v.strip():
+                        cand = (sc, v.strip())
+                        if best is None or cand[0] > best[0]:
+                            best = cand
+                    if isinstance(v, dict):
+                        for kk in ("total", "amount", "sum", "value"):
+                            vv = v.get(kk)
+                            if isinstance(vv, (int, float)):
+                                cand = (sc, str(vv))
+                                if best is None or cand[0] > best[0]:
+                                    best = cand
+                            if isinstance(vv, str) and vv.strip():
+                                cand = (sc, vv.strip())
+                                if best is None or cand[0] > best[0]:
+                                    best = cand
+
+                nested = scan(v, depth=depth + 1)
+                if nested is not None:
+                    if best is None or nested[0] > best[0]:
+                        best = nested
+            return best
+        elif isinstance(obj, list):
+            best: tuple[int, str] | None = None
+            for v in obj[:50]:
+                nested = scan(v, depth=depth + 1)
+                if nested is not None and (best is None or nested[0] > best[0]):
+                    best = nested
+            return best
+        return None
+
+    nested_cost = scan(item)
+    if nested_cost is not None:
+        return nested_cost[1]
 
     return NO_DATA_TEXT
 
@@ -270,8 +420,8 @@ def _extract_project_fields(result: dict[str, Any]) -> dict[str, Any]:
         "name": result.get("name"),
         "active": result.get("active"),
         "public": result.get("public"),
-        "createdAt": _display_or_no_data(result.get("createdAt")),
-        "updatedAt": _display_or_no_data(result.get("updatedAt")),
+        "createdAt": _display_date_or_no_data(result.get("createdAt")),
+        "updatedAt": _display_date_or_no_data(result.get("updatedAt")),
         "description_raw": description_value,
         "description_truncated": description_truncated,
     }
@@ -292,6 +442,9 @@ def _render_project_detail_markdown(payload: dict[str, Any]) -> str:
     wp_total = work_packages.get("total", NO_DATA_TEXT)
     wp_preview_count = work_packages.get("preview_count", len(wp_items))
     wp_truncated = bool(work_packages.get("truncated"))
+    wp_next_offset = work_packages.get("next_offset")
+    wp_offset = work_packages.get("offset")
+    wp_page_size = work_packages.get("pageSize")
 
     lines: list[str] = []
     lines.append(f"Proyecto: {name}")
@@ -325,7 +478,20 @@ def _render_project_detail_markdown(payload: dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"Mostrando {wp_preview_count} de {wp_total} paquetes de trabajo.")
     if wp_truncated:
-        lines.append("Si necesitas ver todos los paquetes, dime si quieres filtrar por estado o por texto del nombre.")
+        extra = []
+        if isinstance(wp_offset, int) and isinstance(wp_page_size, int):
+            extra.append(f"Página actual: offset={wp_offset}, pageSize={wp_page_size}.")
+        if isinstance(wp_next_offset, int):
+            extra.append(
+                f"Para continuar: solicita más con `OpenProject_GetProject(project_id={project_id}, work_packages_offset={wp_next_offset}, max_work_packages=20)`."
+            )
+        if extra:
+            lines.append(" ".join(extra))
+        else:
+            lines.append(
+                "Hay más resultados. Si quieres continuar, dime 'continuar' y te muestro los siguientes 20."
+            )
+        lines.append("También puedo filtrar por estado o por texto del nombre.")
 
     return "\n".join(lines).strip()
 
@@ -534,7 +700,9 @@ async def openproject_search_projects(
 
 
 @tool("OpenProject_GetProject")
-async def openproject_get_project(project_id: int, max_work_packages: int = 20) -> dict[str, Any]:
+async def openproject_get_project(
+    project_id: int, max_work_packages: int = 20, work_packages_offset: int = 1
+) -> dict[str, Any]:
     """
     Get project details by ID, including a preview table of work packages.
 
@@ -551,9 +719,15 @@ async def openproject_get_project(project_id: int, max_work_packages: int = 20) 
     project = _extract_project_fields(project_result)
 
     max_work_packages = max(1, min(int(max_work_packages), 50))
+    work_packages_offset = max(1, int(work_packages_offset))
     wps_result = await _post_tool(
         "/tools/list_work_packages",
-        params={"project_id": project_id, "status": "all", "page_size": max_work_packages},
+        params={
+            "project_id": project_id,
+            "status": "all",
+            "page_size": max_work_packages,
+            "offset": work_packages_offset,
+        },
     )
     if isinstance(wps_result, dict) and wps_result.get("_error"):
         payload = {
@@ -579,22 +753,36 @@ async def openproject_get_project(project_id: int, max_work_packages: int = 20) 
 
     embedded = wps_result.get("_embedded") if isinstance(wps_result.get("_embedded"), dict) else {}
     elements = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
-    total = wps_result.get("total", len(elements))
+
+    # Sort by newest first (createdAt, fallback updatedAt).
+    def sort_key(item: Any) -> datetime:
+        if not isinstance(item, dict):
+            return datetime.min
+        dt = _parse_iso_datetime(item.get("createdAt")) or _parse_iso_datetime(item.get("updatedAt"))
+        return dt or datetime.min
+
+    elements_sorted = sorted([e for e in elements if isinstance(e, dict)], key=sort_key, reverse=True)
+
+    total = wps_result.get("total", len(elements_sorted))
+    page_size = wps_result.get("pageSize", max_work_packages)
+    offset = wps_result.get("offset", work_packages_offset)
 
     # Enrich each work package using get_work_package for better fields.
     sem = asyncio.Semaphore(4)
 
     async def enrich(wp_item: dict[str, Any]) -> dict[str, Any]:
         wp_id = wp_item.get("id")
+        cost_from_list = _extract_cost_total(wp_item)
+        start_date_list = wp_item.get("startDate") or wp_item.get("derivedStartDate")
         if not isinstance(wp_id, int):
             return {
                 "id": wp_item.get("id"),
                 "status": _work_package_status_from_item(wp_item),
                 "subject": wp_item.get("subject"),
-                "createdAt": _display_or_no_data(wp_item.get("createdAt")),
-                "startDate": _display_or_no_data(wp_item.get("startDate")),
-                "updatedAt": _display_or_no_data(wp_item.get("updatedAt")),
-                "cost_total": _extract_cost_total(wp_item),
+                "createdAt": _display_date_or_no_data(wp_item.get("createdAt")),
+                "startDate": _display_date_or_no_data(start_date_list),
+                "updatedAt": _display_date_or_no_data(wp_item.get("updatedAt")),
+                "cost_total": cost_from_list,
             }
         async with sem:
             detailed = await _post_tool("/tools/get_work_package", params={"work_package_id": wp_id})
@@ -609,21 +797,33 @@ async def openproject_get_project(project_id: int, max_work_packages: int = 20) 
             "id": base.get("id", wp_id),
             "status": _work_package_status_from_item(base),
             "subject": base.get("subject") or wp_item.get("subject"),
-            "createdAt": _display_or_no_data(base.get("createdAt")),
-            "startDate": _display_or_no_data(base.get("startDate")),
-            "updatedAt": _display_or_no_data(base.get("updatedAt")),
-            "cost_total": _extract_cost_total(base),
+            "createdAt": _display_date_or_no_data(base.get("createdAt")),
+            "startDate": _display_date_or_no_data(base.get("startDate") or base.get("derivedStartDate") or start_date_list),
+            "updatedAt": _display_date_or_no_data(base.get("updatedAt")),
+            # Prefer costs coming from list_work_packages (as requested); fallback to detailed item.
+            "cost_total": cost_from_list if cost_from_list != NO_DATA_TEXT else _extract_cost_total(base),
         }
 
-    preview_src = [e for e in elements[:max_work_packages] if isinstance(e, dict)]
+    preview_src = elements_sorted[:max_work_packages]
     wp_items = await asyncio.gather(*(enrich(e) for e in preview_src))
+
+    next_offset: int | None = None
+    if isinstance(total, int) and isinstance(offset, int):
+        current_end = offset + len(preview_src)
+        if current_end <= total:
+            next_offset = current_end + 1
+        if next_offset and next_offset > total:
+            next_offset = None
 
     work_packages = {
         "_type": wps_result.get("_type", "Collection"),
         "total": total,
-        "count": len(elements),
+        "count": len(elements_sorted),
+        "pageSize": page_size,
+        "offset": offset,
         "preview_count": len(wp_items),
-        "truncated": bool(total) and isinstance(total, int) and total > len(wp_items),
+        "truncated": bool(total) and isinstance(total, int) and total > (offset - 1 + len(wp_items)),
+        "next_offset": next_offset,
         "items": wp_items,
     }
 
