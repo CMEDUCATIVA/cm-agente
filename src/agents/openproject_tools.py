@@ -286,6 +286,22 @@ def _escape_md(text: Any) -> str:
     return s.replace("|", "\\|")
 
 
+def _extract_id_from_href(href: Any) -> int | None:
+    if not isinstance(href, str) or not href.strip():
+        return None
+    # Expected formats:
+    # - /api/v3/projects/689
+    # - /api/v3/users/450
+    parts = [p for p in href.strip("/").split("/") if p]
+    if not parts:
+        return None
+    tail = parts[-1]
+    try:
+        return int(tail)
+    except Exception:
+        return None
+
+
 def _extract_status_title(value: Any) -> str:
     if isinstance(value, dict):
         title = value.get("title")
@@ -492,6 +508,67 @@ def _render_project_detail_markdown(payload: dict[str, Any]) -> str:
                 "Hay más resultados. Si quieres continuar, dime 'continuar' y te muestro los siguientes 20."
             )
         lines.append("También puedo filtrar por estado o por texto del nombre.")
+
+    return "\n".join(lines).strip()
+
+
+def _render_user_detail_markdown(payload: dict[str, Any]) -> str:
+    user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+    memberships = payload.get("memberships") if isinstance(payload.get("memberships"), dict) else {}
+    items = memberships.get("items") if isinstance(memberships.get("items"), list) else []
+
+    user_id = user.get("id", NO_DATA_TEXT)
+    first = user.get("firstName", NO_DATA_TEXT)
+    last = user.get("lastName", NO_DATA_TEXT)
+    email = user.get("email", NO_DATA_TEXT)
+
+    projects_total = payload.get("projects_total", NO_DATA_TEXT)
+    m_total = memberships.get("total", NO_DATA_TEXT)
+    m_preview = memberships.get("preview_count", len(items))
+    truncated = bool(memberships.get("truncated"))
+    next_offset = memberships.get("next_offset")
+    offset = memberships.get("offset")
+    page_size = memberships.get("pageSize")
+
+    lines: list[str] = []
+    lines.append("Usuario")
+    lines.append(f"- ID: {user_id}")
+    lines.append(f"- Nombres: {first}")
+    lines.append(f"- Apellidos: {last}")
+    lines.append(f"- Email: {email}")
+    lines.append("")
+    lines.append(f"Total de proyectos involucrados: {projects_total}")
+    lines.append("")
+    lines.append("Proyectos (por membresía):")
+    lines.append("")
+    lines.append("| Proyecto | Membresía | Creado | Actualizado |")
+    lines.append("|---|---:|---|---|")
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        project_name = _escape_md(it.get("project_title"))
+        project_id = it.get("project_id")
+        if isinstance(project_id, int):
+            project_name = f"{project_name} (ID: {project_id})"
+        membership_id = _escape_md(it.get("membership_id"))
+        created = _escape_md(it.get("createdAt"))
+        updated = _escape_md(it.get("updatedAt"))
+        lines.append(f"| {project_name} | {membership_id} | {created} | {updated} |")
+
+    lines.append("")
+    lines.append(f"Mostrando {m_preview} de {m_total} membresías.")
+    if truncated:
+        extra = []
+        if isinstance(offset, int) and isinstance(page_size, int):
+            extra.append(f"Página actual: offset={offset}, pageSize={page_size}.")
+        if isinstance(next_offset, int):
+            extra.append(
+                f"Para continuar: `OpenProject_GetUser(user_id={user_id}, memberships_offset={next_offset}, max_memberships=20)`."
+            )
+        if extra:
+            lines.append(" ".join(extra))
+        else:
+            lines.append("Hay más resultados. Si quieres continuar, dime 'continuar' y te muestro los siguientes 20.")
 
     return "\n".join(lines).strip()
 
@@ -935,9 +1012,142 @@ async def openproject_list_users(active_only: bool = True, max_items: int = 50) 
 
 
 @tool("OpenProject_GetUser")
-async def openproject_get_user(user_id: int) -> dict[str, Any]:
-    """Get user details by ID."""
-    return await _post_tool("/tools/get_user", params={"user_id": user_id})
+async def openproject_get_user(
+    user_id: int, max_memberships: int = 20, memberships_offset: int = 1
+) -> dict[str, Any]:
+    """
+    Get a user by ID and list their project memberships.
+
+    Returns:
+    - `user`: id, firstName, lastName, email
+    - `projects_total`: unique projects count in the returned memberships (best-effort)
+    - `memberships`: membership list with project title and membership created/updated
+    - `rendered`: Markdown ready for chat
+    """
+    user_result = await _post_tool("/tools/get_user", params={"user_id": user_id})
+    if isinstance(user_result, dict) and user_result.get("_error"):
+        return user_result
+    if not isinstance(user_result, dict):
+        return {"result": _safe_str(user_result)}
+
+    user = {
+        "id": user_result.get("id"),
+        "firstName": _display_or_no_data(user_result.get("firstName")),
+        "lastName": _display_or_no_data(user_result.get("lastName")),
+        "email": _display_or_no_data(user_result.get("email")),
+    }
+
+    max_memberships = max(1, min(int(max_memberships), 50))
+    memberships_offset = max(1, int(memberships_offset))
+
+    memberships_result = await _post_tool(
+        "/tools/list_memberships",
+        params={
+            "user_id": user_id,
+            "page_size": max_memberships,
+            "offset": memberships_offset,
+        },
+    )
+    if (
+        isinstance(memberships_result, dict)
+        and memberships_result.get("_error") == "openproject_mcp_http_error"
+        and memberships_result.get("status_code") in (400, 404, 422)
+    ):
+        # Some MCP adapters might use a different filter name (e.g., principal_id).
+        memberships_result = await _post_tool(
+            "/tools/list_memberships",
+            params={
+                "principal_id": user_id,
+                "page_size": max_memberships,
+                "offset": memberships_offset,
+            },
+        )
+    if isinstance(memberships_result, dict) and memberships_result.get("_error"):
+        payload = {
+            "user": user,
+            "projects_total": NO_DATA_TEXT,
+            "memberships": {"_error": memberships_result, "total": NO_DATA_TEXT, "preview_count": 0, "items": []},
+        }
+        payload["rendered"] = _render_user_detail_markdown(payload)
+        return payload
+
+    if not isinstance(memberships_result, dict):
+        payload = {
+            "user": user,
+            "projects_total": NO_DATA_TEXT,
+            "memberships": {"total": NO_DATA_TEXT, "preview_count": 0, "items": []},
+        }
+        payload["rendered"] = _render_user_detail_markdown(payload)
+        return payload
+
+    embedded = (
+        memberships_result.get("_embedded")
+        if isinstance(memberships_result.get("_embedded"), dict)
+        else {}
+    )
+    elements = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
+
+    total = memberships_result.get("total", len(elements))
+    page_size = memberships_result.get("pageSize", max_memberships)
+    offset = memberships_result.get("offset", memberships_offset)
+
+    membership_items: list[dict[str, Any]] = []
+    project_ids: set[int] = set()
+
+    for el in elements:
+        if not isinstance(el, dict):
+            continue
+        links = el.get("_links") if isinstance(el.get("_links"), dict) else {}
+        project_link = links.get("project") if isinstance(links.get("project"), dict) else {}
+        project_href = project_link.get("href")
+        project_id = _extract_id_from_href(project_href)
+        project_title = project_link.get("title") if isinstance(project_link.get("title"), str) else None
+        if project_id is not None:
+            project_ids.add(project_id)
+
+        membership_items.append(
+            {
+                "membership_id": el.get("id"),
+                "createdAt": _display_date_or_no_data(el.get("createdAt")),
+                "updatedAt": _display_date_or_no_data(el.get("updatedAt")),
+                "_updatedAt_raw": el.get("updatedAt"),
+                "project_id": project_id,
+                "project_title": project_title or NO_DATA_TEXT,
+            }
+        )
+
+    # Sort memberships by newest update first.
+    membership_items.sort(
+        key=lambda x: _parse_iso_datetime(x.get("_updatedAt_raw")) or datetime.min, reverse=True
+    )
+
+    next_offset: int | None = None
+    if isinstance(total, int) and isinstance(offset, int):
+        current_end = offset + len(elements)
+        if current_end <= total:
+            next_offset = current_end + 1
+        if next_offset and next_offset > total:
+            next_offset = None
+
+    memberships_payload = {
+        "_type": memberships_result.get("_type", "Collection"),
+        "total": total,
+        "count": len(elements),
+        "pageSize": page_size,
+        "offset": offset,
+        "preview_count": len(membership_items),
+        "truncated": bool(total) and isinstance(total, int) and total > (offset - 1 + len(membership_items)),
+        "next_offset": next_offset,
+        "items": [{k: v for k, v in it.items() if not str(k).startswith("_")} for it in membership_items[:max_memberships]],
+    }
+
+    payload = {
+        "user": user,
+        "projects_total": len(project_ids),
+        "memberships": memberships_payload,
+    }
+    payload["rendered"] = _render_user_detail_markdown(payload)
+    return payload
 
 
 @tool("OpenProject_RestListProjects")
