@@ -19,6 +19,13 @@ def _safe_str(x: Any) -> str:
         return repr(x)
 
 
+def _summarize_text(text: str, *, max_len: int = 180) -> str:
+    cleaned = " ".join(text.replace("\r", " ").replace("\n", " ").split())
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[:max_len].rstrip() + "…"
+
+
 def _compact_collection(
     result: Any,
     *,
@@ -147,7 +154,7 @@ def _project_preview(item: dict[str, Any]) -> dict[str, Any]:
     if description_raw is None or (isinstance(description_raw, str) and not description_raw.strip()):
         description_value: Any = NO_DESCRIPTION_TEXT
     else:
-        description_value = description_raw
+        description_value = _summarize_text(description_raw)
     return {
         "id": item.get("id"),
         "identifier": item.get("identifier"),
@@ -158,6 +165,41 @@ def _project_preview(item: dict[str, Any]) -> dict[str, Any]:
         "createdAt": _display_or_no_data(item.get("createdAt")),
         "updatedAt": _display_or_no_data(item.get("updatedAt")),
     }
+
+
+def _render_projects_markdown(payload: dict[str, Any]) -> str:
+    total = payload.get("total", NO_DATA_TEXT)
+    preview_count = payload.get("preview_count", 0)
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    truncated = bool(payload.get("truncated"))
+
+    lines: list[str] = []
+    lines.append(f"Proyectos (mostrando {preview_count} de {total})")
+    lines.append("")
+
+    for idx, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or NO_DATA_TEXT
+        project_id = item.get("id") or NO_DATA_TEXT
+        identifier = item.get("identifier") or NO_DATA_TEXT
+        created_at = item.get("createdAt") or NO_DATA_TEXT
+        updated_at = item.get("updatedAt") or NO_DATA_TEXT
+        description = item.get("description_raw") or NO_DESCRIPTION_TEXT
+        wp_total = item.get("work_packages_total") if item.get("work_packages_total") is not None else NO_DATA_TEXT
+
+        lines.append(f"{idx}. {name}  ")
+        lines.append(f"   - ID: {project_id} | Identificador: {identifier}")
+        lines.append(f"   - Creado: {created_at} | Última actualización: {updated_at}")
+        lines.append(f"   - Descripción: {description}")
+        lines.append(f"   - Paquetes de trabajo (total): {wp_total}")
+        lines.append("")
+
+    lines.append(f"Total de proyectos: {total}")
+    if truncated:
+        lines.append("")
+        lines.append("Para ver un proyecto específico, dime el nombre (o parte del nombre) y lo busco.")
+    return "\n".join(lines).strip()
 
 
 def _mcp_base_url() -> str:
@@ -291,7 +333,7 @@ async def openproject_list_projects(active_only: bool = True, max_items: int = 1
     else:
         truncated = len(items) > max_items
 
-    return {
+    payload = {
         "_type": result.get("_type", "Collection"),
         "total": total,
         "count": len(items),
@@ -302,6 +344,8 @@ async def openproject_list_projects(active_only: bool = True, max_items: int = 1
         "items": preview,
         "note": f"Mostrando solo los primeros {max_items} proyectos. Si deseas un proyecto en específico, dime el nombre (o parte del nombre) y lo busco.",
     }
+    payload["rendered"] = _render_projects_markdown(payload)
+    return payload
 
 
 @tool("OpenProject_SearchProjects")
