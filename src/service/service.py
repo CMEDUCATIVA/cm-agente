@@ -126,6 +126,19 @@ async def _handle_input(user_input: UserInput, agent: AgentGraph) -> tuple[dict[
 
     configurable = {"thread_id": thread_id, "user_id": user_id}
     if user_input.model is not None:
+        # Validate requested model to avoid confusing 500s when a client sends
+        # an example model (e.g., "gpt-5-nano") that isn't enabled in this deployment.
+        if user_input.model not in settings.AVAILABLE_MODELS:
+            models = list(settings.AVAILABLE_MODELS)
+            models.sort()
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "Unsupported model for this deployment",
+                    "requested_model": str(user_input.model),
+                    "available_models": [str(m) for m in models],
+                },
+            )
         configurable["model"] = user_input.model
 
     callbacks: list[Any] = []
@@ -209,7 +222,7 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
         output.run_id = str(run_id)
         return output
     except Exception as e:
-        logger.error(f"An exception occurred: {e}")
+        logger.exception("An exception occurred during /invoke")
         raise HTTPException(status_code=500, detail="Unexpected error")
 
 
@@ -320,7 +333,7 @@ async def message_generator(
                     # So we only print non-empty content.
                     yield f"data: {json.dumps({'type': 'token', 'content': convert_message_content_to_string(content)})}\n\n"
     except Exception as e:
-        logger.error(f"Error in message generator: {e}")
+        logger.exception("Error in message generator")
         yield f"data: {json.dumps({'type': 'error', 'content': 'Internal server error'})}\n\n"
     finally:
         yield "data: [DONE]\n\n"
