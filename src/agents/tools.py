@@ -6,6 +6,8 @@ from langchain_chroma import Chroma
 from langchain_core.tools import BaseTool, tool
 from langchain_openai import OpenAIEmbeddings
 
+from core import settings
+
 
 def calculator_func(expression: str) -> str:
     """Calculates a math expression using numexpr.
@@ -50,7 +52,17 @@ def format_contexts(docs):
 def load_chroma_db():
     # Create the embedding function for our project description database
     try:
-        embeddings = OpenAIEmbeddings()
+        embedding_kwargs: dict[str, object] = {}
+        if settings.EMBEDDING_MODEL:
+            embedding_kwargs["model"] = settings.EMBEDDING_MODEL
+        if settings.EMBEDDING_DIM:
+            embedding_kwargs["dimensions"] = settings.EMBEDDING_DIM
+        if settings.EMBEDDING_BINDING_HOST:
+            embedding_kwargs["base_url"] = settings.EMBEDDING_BINDING_HOST
+        if settings.EMBEDDING_BINDING_API_KEY:
+            embedding_kwargs["api_key"] = settings.EMBEDDING_BINDING_API_KEY.get_secret_value()
+
+        embeddings = OpenAIEmbeddings(**embedding_kwargs)  # type: ignore[arg-type]
     except Exception as e:
         raise RuntimeError(
             "Failed to initialize OpenAIEmbeddings. Ensure the OpenAI API key is set."
