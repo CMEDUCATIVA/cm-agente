@@ -28,17 +28,55 @@ def _auth_headers() -> dict[str, str]:
 async def _post_tool(path: str, params: dict[str, Any] | None = None) -> Any:
     url = f"{_mcp_base_url()}{path}"
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, params=params or {}, headers=_auth_headers())
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = await client.post(url, params=params or {}, headers=_auth_headers())
+        except httpx.HTTPError as e:
+            return {
+                "_error": "openproject_mcp_request_failed",
+                "method": "POST",
+                "url": url,
+                "detail": str(e),
+            }
+
+        if resp.status_code >= 400:
+            return {
+                "_error": "openproject_mcp_http_error",
+                "method": "POST",
+                "url": url,
+                "status_code": resp.status_code,
+                "response_text": resp.text,
+            }
+        try:
+            return resp.json()
+        except Exception:
+            return {"_raw": resp.text}
 
 
 async def _get_rest(path: str, params: dict[str, Any] | None = None) -> Any:
     url = f"{_mcp_base_url()}{path}"
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, params=params or {}, headers=_auth_headers())
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = await client.get(url, params=params or {}, headers=_auth_headers())
+        except httpx.HTTPError as e:
+            return {
+                "_error": "openproject_mcp_request_failed",
+                "method": "GET",
+                "url": url,
+                "detail": str(e),
+            }
+
+        if resp.status_code >= 400:
+            return {
+                "_error": "openproject_mcp_http_error",
+                "method": "GET",
+                "url": url,
+                "status_code": resp.status_code,
+                "response_text": resp.text,
+            }
+        try:
+            return resp.json()
+        except Exception:
+            return {"_raw": resp.text}
 
 
 @tool("OpenProject_TestConnection")
@@ -162,4 +200,3 @@ openproject_tools: list[BaseTool] = [
     openproject_get_user,
     openproject_rest_list_projects,
 ]
-
