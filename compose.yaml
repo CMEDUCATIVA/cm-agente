@@ -1,0 +1,130 @@
+services:
+  postgres:
+    image: postgres:16
+    # For production, avoid exposing Postgres publicly; keep it internal to the Compose network.
+    # If you need to connect from outside (e.g., for migrations/debug), you can re-add:
+    # ports:
+    #   - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-agent_service}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  agent_service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+    ports:
+      - "8080:8080"
+    environment:
+      # Service config
+      - HOST=0.0.0.0
+      - PORT=8080
+      - MODE=${MODE:-}
+      - LOG_LEVEL=${LOG_LEVEL:-WARNING}
+      - AUTH_SECRET=${AUTH_SECRET:-}
+
+      # Persistence (recommended for production)
+      - DATABASE_TYPE=${DATABASE_TYPE:-postgres}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-agent_service}
+      - POSTGRES_APPLICATION_NAME=${POSTGRES_APPLICATION_NAME:-agent-service-toolkit}
+      - POSTGRES_MIN_CONNECTIONS_PER_POOL=${POSTGRES_MIN_CONNECTIONS_PER_POOL:-1}
+      - POSTGRES_MAX_CONNECTIONS_PER_POOL=${POSTGRES_MAX_CONNECTIONS_PER_POOL:-3}
+
+      # LLM provider credentials (set at least one of these in EasyPanel)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-}
+      - AZURE_OPENAI_DEPLOYMENT_MAP=${AZURE_OPENAI_DEPLOYMENT_MAP:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - USE_AWS_BEDROCK=${USE_AWS_BEDROCK:-false}
+      - AWS_KB_ID=${AWS_KB_ID:-}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - USE_FAKE_MODEL=${USE_FAKE_MODEL:-false}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-}
+      - COMPATIBLE_MODEL=${COMPATIBLE_MODEL:-}
+      - COMPATIBLE_API_KEY=${COMPATIBLE_API_KEY:-}
+      - COMPATIBLE_BASE_URL=${COMPATIBLE_BASE_URL:-}
+      - OPENWEATHERMAP_API_KEY=${OPENWEATHERMAP_API_KEY:-}
+
+      # Tracing (optional)
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY:-}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-default}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT:-https://api.smith.langchain.com}
+      - LANGFUSE_TRACING=${LANGFUSE_TRACING:-false}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+
+      # MCP (optional)
+      - GITHUB_PAT=${GITHUB_PAT:-}
+      - MCP_GITHUB_SERVER_URL=${MCP_GITHUB_SERVER_URL:-https://api.githubcopilot.com/mcp/}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/info', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # Optional: mount credential files if you use file-based providers/certs
+    # volumes:
+    #   - ./privatecredentials:/privatecredentials:ro
+  streamlit_app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.app
+    ports:
+      - "8501:8501"
+    depends_on:
+      agent_service:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8501/healthz', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    environment:
+      - AGENT_URL=http://agent_service:8080
+      # Client-side optional features (voice) read these env vars
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - AUTH_SECRET=${AUTH_SECRET:-}
+      - VOICE_STT_PROVIDER=${VOICE_STT_PROVIDER:-}
+      - VOICE_TTS_PROVIDER=${VOICE_TTS_PROVIDER:-}
+
+volumes:
+  postgres_data:
