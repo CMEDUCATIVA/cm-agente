@@ -103,6 +103,15 @@ class Settings(BaseSettings):
 
     OPENWEATHERMAP_API_KEY: SecretStr | None = None
 
+    # Embeddings configuration (used by RAG tooling / Chroma retriever)
+    # By default, LangChain's OpenAIEmbeddings will use OPENAI_API_KEY and OpenAI's API host.
+    # These settings let you override the embedding model and/or use an OpenAI-compatible host.
+    EMBEDDING_BINDING: str | None = None
+    EMBEDDING_MODEL: str | None = None
+    EMBEDDING_DIM: int | None = None
+    EMBEDDING_BINDING_HOST: str | None = None
+    EMBEDDING_BINDING_API_KEY: SecretStr | None = None
+
     # MCP Configuration
     GITHUB_PAT: SecretStr | None = None
     MCP_GITHUB_SERVER_URL: str = "https://api.githubcopilot.com/mcp/"
