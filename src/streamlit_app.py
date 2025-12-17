@@ -3,7 +3,9 @@ import os
 import urllib.parse
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
+import httpx
 import streamlit as st
 from dotenv import load_dotenv
 from pydantic import ValidationError
@@ -27,6 +29,307 @@ from voice import VoiceManager
 APP_TITLE = "Agent Service Toolkit"
 APP_ICON = "🧰"
 USER_ID_COOKIE = "user_id"
+OPENPROJECT_AGENT_ID = "openproject-agent"
+
+
+def _openproject_mcp_base_url() -> str | None:
+    base = os.getenv("OPENPROJECT_MCP_URL")
+    if not base:
+        return None
+    return base.rstrip("/")
+
+
+def _openproject_mcp_auth_headers() -> dict[str, str]:
+    enabled = os.getenv("OPENPROJECT_MCP_HTTP_AUTH_ENABLED", "false").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    )
+    if not enabled:
+        return {}
+    username = os.getenv("OPENPROJECT_MCP_HTTP_AUTH_USERNAME")
+    password = os.getenv("OPENPROJECT_MCP_HTTP_AUTH_PASSWORD")
+    if not username or not password:
+        return {}
+
+    import base64
+
+    token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    return {"Authorization": f"Basic {token}"}
+
+
+async def _openproject_post_tool(path: str, params: dict[str, Any]) -> Any:
+    base = _openproject_mcp_base_url()
+    if not base:
+        return {"_error": "missing_OPENPROJECT_MCP_URL"}
+    url = f"{base}{path}"
+    timeout = httpx.Timeout(30.0, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            resp = await client.post(url, params=params, headers=_openproject_mcp_auth_headers())
+        except httpx.HTTPError as e:
+            return {"_error": "request_failed", "detail": str(e) or repr(e)}
+        if resp.status_code >= 400:
+            return {
+                "_error": "http_error",
+                "status_code": resp.status_code,
+                "response_text": resp.text,
+            }
+        try:
+            return resp.json()
+        except Exception:
+            return {"_raw": resp.text}
+
+
+def _parse_iso_datetime_any(value: Any):
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+
+    from datetime import datetime
+
+    try:
+        normalized = s.replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized)
+    except Exception:
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d")
+        except Exception:
+            return None
+
+
+def _extract_title(value: Any) -> str | None:
+    if isinstance(value, dict):
+        t = value.get("title")
+        if isinstance(t, str) and t.strip():
+            return t.strip()
+    return None
+
+
+def _work_package_status(item: dict[str, Any]) -> str:
+    links = item.get("_links") if isinstance(item.get("_links"), dict) else {}
+    status = links.get("status")
+    title = _extract_title(status)
+    if title:
+        return title
+    v = item.get("status")
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    return "Sin estado"
+
+
+def _month_key(dt) -> str:
+    return f"{dt.year:04d}-{dt.month:02d}"
+
+
+def _csv_bytes(rows: list[dict[str, Any]]) -> bytes:
+    import csv
+    from io import StringIO
+
+    if not rows:
+        return b""
+    fieldnames: list[str] = sorted({k for r in rows for k in r.keys()})
+    s = StringIO()
+    writer = csv.DictWriter(s, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for r in rows:
+        writer.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in fieldnames})
+    return s.getvalue().encode("utf-8")
+
+
+async def _fetch_openproject_dashboard_data(project_id: int, *, max_work_packages: int = 300) -> dict[str, Any]:
+    project = await _openproject_post_tool("/tools/get_project", {"project_id": project_id})
+    memberships = await _openproject_post_tool(
+        "/tools/list_memberships",
+        {"project_id": project_id, "page_size": 200, "offset": 1},
+    )
+    work_packages = await _openproject_post_tool(
+        "/tools/list_work_packages",
+        {"project_id": project_id, "status": "all", "page_size": max_work_packages, "offset": 1},
+    )
+    return {"project": project, "memberships": memberships, "work_packages": work_packages}
+
+
+def _render_openproject_dashboard(payload: dict[str, Any]) -> None:
+    try:
+        import plotly.express as px  # type: ignore
+    except Exception:
+        st.warning(
+            "Para ver gráficos necesitas Plotly instalado. "
+            "Instala `plotly` (y opcional `kaleido` para descargar PNG)."
+        )
+        st.json(payload)
+        return
+
+    project = payload.get("project") if isinstance(payload.get("project"), dict) else {}
+    if project.get("_error"):
+        st.error(f"Error obteniendo proyecto: {project}")
+        return
+
+    project_name = project.get("name") or project.get("identifier") or f"Proyecto {project.get('id')}"
+    st.subheader(f"Dashboard: {project_name}")
+
+    wps = payload.get("work_packages") if isinstance(payload.get("work_packages"), dict) else {}
+    wp_embedded = wps.get("_embedded") if isinstance(wps.get("_embedded"), dict) else {}
+    wp_elements = wp_embedded.get("elements") if isinstance(wp_embedded.get("elements"), list) else []
+    wp_items = [e for e in wp_elements if isinstance(e, dict)]
+
+    wp_rows: list[dict[str, Any]] = []
+    status_counts: dict[str, int] = {}
+    created_by_month: dict[str, int] = {}
+
+    for it in wp_items:
+        status = _work_package_status(it)
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+        created_at = it.get("createdAt")
+        dt = _parse_iso_datetime_any(created_at)
+        if dt:
+            key = _month_key(dt)
+            created_by_month[key] = created_by_month.get(key, 0) + 1
+
+        wp_rows.append(
+            {
+                "id": it.get("id"),
+                "subject": it.get("subject"),
+                "status": status,
+                "createdAt": created_at,
+                "updatedAt": it.get("updatedAt"),
+                "startDate": it.get("startDate") or it.get("derivedStartDate"),
+                "percentageDone": it.get("percentageDone"),
+            }
+        )
+
+    memberships = payload.get("memberships") if isinstance(payload.get("memberships"), dict) else {}
+    m_embedded = memberships.get("_embedded") if isinstance(memberships.get("_embedded"), dict) else {}
+    m_elements = m_embedded.get("elements") if isinstance(m_embedded.get("elements"), list) else []
+    m_items = [e for e in m_elements if isinstance(e, dict)]
+
+    role_counts: dict[str, int] = {}
+    member_rows: list[dict[str, Any]] = []
+
+    def extract_id_from_href(href: Any) -> int | None:
+        if not isinstance(href, str):
+            return None
+        parts = [p for p in href.strip("/").split("/") if p]
+        if not parts:
+            return None
+        try:
+            return int(parts[-1])
+        except Exception:
+            return None
+
+    for el in m_items:
+        links = el.get("_links") if isinstance(el.get("_links"), dict) else {}
+        principal = links.get("principal") if isinstance(links.get("principal"), dict) else {}
+        principal_title = _extract_title(principal) or ""
+        principal_id = extract_id_from_href(principal.get("href"))
+
+        roles_link = links.get("roles")
+        roles: list[str] = []
+        if isinstance(roles_link, list):
+            for r in roles_link:
+                t = _extract_title(r)
+                if t:
+                    roles.append(t)
+        elif isinstance(roles_link, dict):
+            t = _extract_title(roles_link)
+            if t:
+                roles.append(t)
+
+        if not roles:
+            roles = ["Sin rol"]
+
+        for r in roles:
+            role_counts[r] = role_counts.get(r, 0) + 1
+
+        member_rows.append(
+            {
+                "principal_id": principal_id,
+                "principal_title": principal_title,
+                "roles": ", ".join(roles),
+                "membership_id": el.get("id"),
+            }
+        )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Work packages (muestra)", len(wp_rows))
+    c2.metric("Miembros (muestra)", len(member_rows))
+    c3.metric("Estados distintos", len(status_counts))
+
+    if status_counts:
+        df_status = [{"status": k, "count": v} for k, v in sorted(status_counts.items(), key=lambda x: -x[1])]
+        fig_status = px.bar(df_status, x="status", y="count", title="Work packages por estado")
+        st.plotly_chart(fig_status, use_container_width=True)
+
+        st.download_button(
+            "Descargar datos (work_packages.csv)",
+            data=_csv_bytes(wp_rows),
+            file_name=f"openproject_{project.get('id')}_work_packages.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+        html = fig_status.to_html(include_plotlyjs="cdn").encode("utf-8")
+        st.download_button(
+            "Descargar gráfico (HTML)",
+            data=html,
+            file_name=f"openproject_{project.get('id')}_wp_por_estado.html",
+            mime="text/html",
+            use_container_width=True,
+        )
+
+        try:
+            png = fig_status.to_image(format="png")  # requires kaleido
+            st.download_button(
+                "Descargar gráfico (PNG)",
+                data=png,
+                file_name=f"openproject_{project.get('id')}_wp_por_estado.png",
+                mime="image/png",
+                use_container_width=True,
+            )
+        except Exception:
+            st.caption("Para descargar PNG instala `kaleido`.")
+
+    if created_by_month:
+        df_month = [{"month": k, "count": v} for k, v in sorted(created_by_month.items())]
+        fig_month = px.line(df_month, x="month", y="count", markers=True, title="Work packages creados por mes")
+        st.plotly_chart(fig_month, use_container_width=True)
+
+    if role_counts:
+        df_roles = [{"role": k, "count": v} for k, v in sorted(role_counts.items(), key=lambda x: -x[1])]
+        fig_roles = px.bar(df_roles, x="role", y="count", title="Distribución de roles (membresías)")
+        st.plotly_chart(fig_roles, use_container_width=True)
+
+        st.download_button(
+            "Descargar datos (members.csv)",
+            data=_csv_bytes(member_rows),
+            file_name=f"openproject_{project.get('id')}_members.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    import json
+
+    summary = {
+        "project_id": project.get("id"),
+        "work_packages_sample": len(wp_rows),
+        "members_sample": len(member_rows),
+        "status_counts": status_counts,
+        "created_by_month": created_by_month,
+        "role_counts": role_counts,
+    }
+    st.download_button(
+        "Descargar resumen (JSON)",
+        data=json.dumps(summary, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name=f"openproject_{project.get('id')}_summary.json",
+        mime="application/json",
+        use_container_width=True,
+    )
 
 
 def get_or_create_user_id() -> str:
@@ -159,6 +462,29 @@ async def main() -> None:
             # Display user ID (for debugging or user information)
             st.text_input("User ID (read-only)", value=user_id, disabled=True)
 
+        if agent_client.agent == OPENPROJECT_AGENT_ID:
+            with st.expander("📊 OpenProject Dashboard", expanded=False):
+                st.caption(
+                    "Genera gráficos desde OpenProject vía `OPENPROJECT_MCP_URL`. "
+                    "Puedes descargar datos (CSV/JSON) y el gráfico (HTML/PNG si tienes kaleido)."
+                )
+                base_url = _openproject_mcp_base_url()
+                if not base_url:
+                    st.error("Falta configurar `OPENPROJECT_MCP_URL` en tu `.env`.")
+                else:
+                    st.code(base_url, language="text")
+
+                project_id = st.number_input("Project ID", min_value=1, step=1, value=1)
+                max_wps = st.slider(
+                    "Máx. work packages a cargar", min_value=50, max_value=500, value=300, step=50
+                )
+                if st.button("Generar gráficos", use_container_width=True):
+                    with st.spinner("Cargando datos desde OpenProject MCP..."):
+                        payload = await _fetch_openproject_dashboard_data(
+                            int(project_id), max_work_packages=int(max_wps)
+                        )
+                    st.session_state["openproject_dashboard_payload"] = payload
+
         @st.dialog("Architecture")
         def architecture_dialog() -> None:
             st.image(
@@ -203,6 +529,9 @@ async def main() -> None:
 
     # Draw existing messages
     messages: list[ChatMessage] = st.session_state.messages
+
+    if agent_client.agent == OPENPROJECT_AGENT_ID and "openproject_dashboard_payload" in st.session_state:
+        _render_openproject_dashboard(st.session_state["openproject_dashboard_payload"])
 
     if len(messages) == 0:
         match agent_client.agent:
