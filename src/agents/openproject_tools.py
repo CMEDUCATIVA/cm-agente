@@ -202,6 +202,134 @@ def _render_projects_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+def _escape_md(text: Any) -> str:
+    if text is None:
+        return NO_DATA_TEXT
+    s = str(text)
+    s = s.replace("\n", " ").replace("\r", " ")
+    return s.replace("|", "\\|")
+
+
+def _extract_status_title(value: Any) -> str:
+    if isinstance(value, dict):
+        title = value.get("title")
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+    return NO_DATA_TEXT
+
+
+def _work_package_status_from_item(item: dict[str, Any]) -> str:
+    links = item.get("_links") if isinstance(item.get("_links"), dict) else {}
+    status = links.get("status") if isinstance(links.get("status"), dict) else None
+    status_title = _extract_status_title(status)
+    if status_title != NO_DATA_TEXT:
+        return status_title
+    # Some payloads might have a top-level status field.
+    status_field = item.get("status")
+    if isinstance(status_field, str) and status_field.strip():
+        return status_field.strip()
+    return NO_DATA_TEXT
+
+
+def _extract_cost_total(item: dict[str, Any]) -> str:
+    # Best-effort: different OpenProject setups expose costs differently (or not at all).
+    for key in ("totalCost", "total_cost", "costTotal", "cost_total", "costsTotal"):
+        v = item.get(key)
+        if isinstance(v, (int, float)):
+            return str(v)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
+    # Some APIs include a costs object.
+    costs = item.get("costs")
+    if isinstance(costs, dict):
+        for key in ("total", "amount", "sum"):
+            v = costs.get(key)
+            if isinstance(v, (int, float)):
+                return str(v)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+    return NO_DATA_TEXT
+
+
+def _extract_project_fields(result: dict[str, Any]) -> dict[str, Any]:
+    # Full description for a single project can be important; keep it as complete as possible.
+    # We still cap at a very high value to avoid extreme payloads blowing up responses.
+    max_len = 200_000
+    description_raw = _extract_description_raw(result.get("description"), max_len=max_len)
+    if description_raw is None or not description_raw.strip():
+        description_value: Any = NO_DESCRIPTION_TEXT
+    else:
+        description_value = description_raw
+
+    description_truncated = isinstance(description_raw, str) and description_raw.endswith("...(truncated)")
+    return {
+        "id": result.get("id"),
+        "identifier": result.get("identifier"),
+        "name": result.get("name"),
+        "active": result.get("active"),
+        "public": result.get("public"),
+        "createdAt": _display_or_no_data(result.get("createdAt")),
+        "updatedAt": _display_or_no_data(result.get("updatedAt")),
+        "description_raw": description_value,
+        "description_truncated": description_truncated,
+    }
+
+
+def _render_project_detail_markdown(payload: dict[str, Any]) -> str:
+    project = payload.get("project") if isinstance(payload.get("project"), dict) else {}
+    work_packages = payload.get("work_packages") if isinstance(payload.get("work_packages"), dict) else {}
+    wp_items = work_packages.get("items") if isinstance(work_packages.get("items"), list) else []
+
+    name = project.get("name") or NO_DATA_TEXT
+    project_id = project.get("id") or NO_DATA_TEXT
+    created_at = project.get("createdAt") or NO_DATA_TEXT
+    updated_at = project.get("updatedAt") or NO_DATA_TEXT
+    description = project.get("description_raw") or NO_DESCRIPTION_TEXT
+    description_truncated = bool(project.get("description_truncated"))
+
+    wp_total = work_packages.get("total", NO_DATA_TEXT)
+    wp_preview_count = work_packages.get("preview_count", len(wp_items))
+    wp_truncated = bool(work_packages.get("truncated"))
+
+    lines: list[str] = []
+    lines.append(f"Proyecto: {name}")
+    lines.append(f"- ID: {project_id}")
+    lines.append(f"- Creado: {created_at}")
+    lines.append(f"- Última actualización: {updated_at}")
+    lines.append(f"- Descripción: {description}")
+    if description_truncated:
+        lines.append(f"  (Nota: descripción truncada por tamaño; máx. {200_000} caracteres)")
+    lines.append(f"- Paquetes de trabajo (total): {wp_total}")
+    lines.append("")
+
+    # Table
+    lines.append("Paquetes de trabajo (vista previa):")
+    lines.append("")
+    lines.append("| ID | Estado | Nombre | Creado | Inicio | Última actualización | Costo total |")
+    lines.append("|---:|---|---|---|---|---|---:|")
+
+    for item in wp_items:
+        if not isinstance(item, dict):
+            continue
+        wp_id = _escape_md(item.get("id"))
+        status = _escape_md(item.get("status"))
+        subject = _escape_md(item.get("subject"))
+        created = _escape_md(item.get("createdAt"))
+        start = _escape_md(item.get("startDate"))
+        updated = _escape_md(item.get("updatedAt"))
+        cost = _escape_md(item.get("cost_total"))
+        lines.append(f"| {wp_id} | {status} | {subject} | {created} | {start} | {updated} | {cost} |")
+
+    lines.append("")
+    lines.append(f"Mostrando {wp_preview_count} de {wp_total} paquetes de trabajo.")
+    if wp_truncated:
+        lines.append("Si necesitas ver todos los paquetes, dime si quieres filtrar por estado o por texto del nombre.")
+
+    return "\n".join(lines).strip()
+
+
 def _mcp_base_url() -> str:
     if not settings.OPENPROJECT_MCP_URL:
         raise ValueError("OPENPROJECT_MCP_URL is not set")
@@ -406,9 +534,102 @@ async def openproject_search_projects(
 
 
 @tool("OpenProject_GetProject")
-async def openproject_get_project(project_id: int) -> dict[str, Any]:
-    """Get project details by ID."""
-    return await _post_tool("/tools/get_project", params={"project_id": project_id})
+async def openproject_get_project(project_id: int, max_work_packages: int = 20) -> dict[str, Any]:
+    """
+    Get project details by ID, including a preview table of work packages.
+
+    Output includes:
+    - Project fields (created/updated, full description).
+    - Work packages total count + a table preview with key columns.
+    """
+    project_result = await _post_tool("/tools/get_project", params={"project_id": project_id})
+    if isinstance(project_result, dict) and project_result.get("_error"):
+        return project_result
+    if not isinstance(project_result, dict):
+        return {"result": _safe_str(project_result)}
+
+    project = _extract_project_fields(project_result)
+
+    max_work_packages = max(1, min(int(max_work_packages), 50))
+    wps_result = await _post_tool(
+        "/tools/list_work_packages",
+        params={"project_id": project_id, "status": "all", "page_size": max_work_packages},
+    )
+    if isinstance(wps_result, dict) and wps_result.get("_error"):
+        payload = {
+            "project": project,
+            "work_packages": {
+                "_error": wps_result,
+                "total": NO_DATA_TEXT,
+                "preview_count": 0,
+                "truncated": False,
+                "items": [],
+            },
+        }
+        payload["rendered"] = _render_project_detail_markdown(payload)
+        return payload
+
+    if not isinstance(wps_result, dict):
+        payload = {
+            "project": project,
+            "work_packages": {"total": NO_DATA_TEXT, "preview_count": 0, "truncated": False, "items": []},
+        }
+        payload["rendered"] = _render_project_detail_markdown(payload)
+        return payload
+
+    embedded = wps_result.get("_embedded") if isinstance(wps_result.get("_embedded"), dict) else {}
+    elements = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
+    total = wps_result.get("total", len(elements))
+
+    # Enrich each work package using get_work_package for better fields.
+    sem = asyncio.Semaphore(4)
+
+    async def enrich(wp_item: dict[str, Any]) -> dict[str, Any]:
+        wp_id = wp_item.get("id")
+        if not isinstance(wp_id, int):
+            return {
+                "id": wp_item.get("id"),
+                "status": _work_package_status_from_item(wp_item),
+                "subject": wp_item.get("subject"),
+                "createdAt": _display_or_no_data(wp_item.get("createdAt")),
+                "startDate": _display_or_no_data(wp_item.get("startDate")),
+                "updatedAt": _display_or_no_data(wp_item.get("updatedAt")),
+                "cost_total": _extract_cost_total(wp_item),
+            }
+        async with sem:
+            detailed = await _post_tool("/tools/get_work_package", params={"work_package_id": wp_id})
+        if isinstance(detailed, dict) and detailed.get("_error"):
+            base = wp_item
+        elif isinstance(detailed, dict):
+            base = detailed
+        else:
+            base = wp_item
+
+        return {
+            "id": base.get("id", wp_id),
+            "status": _work_package_status_from_item(base),
+            "subject": base.get("subject") or wp_item.get("subject"),
+            "createdAt": _display_or_no_data(base.get("createdAt")),
+            "startDate": _display_or_no_data(base.get("startDate")),
+            "updatedAt": _display_or_no_data(base.get("updatedAt")),
+            "cost_total": _extract_cost_total(base),
+        }
+
+    preview_src = [e for e in elements[:max_work_packages] if isinstance(e, dict)]
+    wp_items = await asyncio.gather(*(enrich(e) for e in preview_src))
+
+    work_packages = {
+        "_type": wps_result.get("_type", "Collection"),
+        "total": total,
+        "count": len(elements),
+        "preview_count": len(wp_items),
+        "truncated": bool(total) and isinstance(total, int) and total > len(wp_items),
+        "items": wp_items,
+    }
+
+    payload = {"project": project, "work_packages": work_packages}
+    payload["rendered"] = _render_project_detail_markdown(payload)
+    return payload
 
 
 @tool("OpenProject_ListWorkPackages")
