@@ -310,6 +310,137 @@ def _extract_status_title(value: Any) -> str:
     return NO_DATA_TEXT
 
 
+def _extract_titles_from_links(value: Any) -> list[str]:
+    """
+    Extract a list of `title` values from an OpenProject link or list of links.
+
+    Examples:
+    - {"href": "...", "title": "Admin"} -> ["Admin"]
+    - [{"href": "...", "title": "A"}, {"href": "...", "title": "B"}] -> ["A", "B"]
+    """
+    titles: list[str] = []
+    if isinstance(value, dict):
+        t = value.get("title")
+        if isinstance(t, str) and t.strip():
+            titles.append(t.strip())
+        return titles
+    if isinstance(value, list):
+        for it in value:
+            if isinstance(it, dict):
+                t = it.get("title")
+                if isinstance(t, str) and t.strip():
+                    titles.append(t.strip())
+        return titles
+    return titles
+
+
+def _project_membership_preview(el: dict[str, Any]) -> dict[str, Any]:
+    links = el.get("_links") if isinstance(el.get("_links"), dict) else {}
+    principal = links.get("principal") if isinstance(links.get("principal"), dict) else {}
+    principal_href = principal.get("href")
+    principal_id = _extract_id_from_href(principal_href)
+    principal_title = principal.get("title") if isinstance(principal.get("title"), str) else None
+
+    # Roles are typically a list under _links.roles
+    role_titles = _extract_titles_from_links(links.get("roles"))
+
+    return {
+        "membership_id": el.get("id"),
+        "principal_id": principal_id if principal_id is not None else NO_DATA_TEXT,
+        "principal_title": principal_title or NO_DATA_TEXT,
+        "role_titles": role_titles if role_titles else [NO_DATA_TEXT],
+    }
+
+
+async def _list_project_memberships(
+    *,
+    project_id: int,
+    max_memberships: int = 50,
+    memberships_offset: int = 1,
+) -> dict[str, Any]:
+    """
+    List project memberships (members involved in the project).
+
+    Uses the MCP adapter tool: POST /tools/list_memberships with project filter.
+    """
+    max_memberships = max(1, min(int(max_memberships), 100))
+    memberships_offset = max(1, int(memberships_offset))
+
+    memberships_result = await _post_tool(
+        "/tools/list_memberships",
+        params={
+            "project_id": project_id,
+            "page_size": max_memberships,
+            "offset": memberships_offset,
+        },
+    )
+    if (
+        isinstance(memberships_result, dict)
+        and memberships_result.get("_error") == "openproject_mcp_http_error"
+        and memberships_result.get("status_code") in (400, 404, 422)
+    ):
+        # Some adapters may use a different filter name (e.g., project).
+        memberships_result = await _post_tool(
+            "/tools/list_memberships",
+            params={
+                "project": project_id,
+                "page_size": max_memberships,
+                "offset": memberships_offset,
+            },
+        )
+
+    if isinstance(memberships_result, dict) and memberships_result.get("_error"):
+        return {
+            "_error": memberships_result,
+            "total": NO_DATA_TEXT,
+            "preview_count": 0,
+            "truncated": False,
+            "items": [],
+        }
+
+    if not isinstance(memberships_result, dict):
+        return {
+            "_error": {"_error": "openproject_mcp_unexpected_response", "result": _safe_str(memberships_result)},
+            "total": NO_DATA_TEXT,
+            "preview_count": 0,
+            "truncated": False,
+            "items": [],
+        }
+
+    embedded = (
+        memberships_result.get("_embedded")
+        if isinstance(memberships_result.get("_embedded"), dict)
+        else {}
+    )
+    elements = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
+
+    total = memberships_result.get("total", len(elements))
+    page_size = memberships_result.get("pageSize", max_memberships)
+    offset = memberships_result.get("offset", memberships_offset)
+
+    items = [_project_membership_preview(el) for el in elements if isinstance(el, dict)]
+
+    next_offset: int | None = None
+    if isinstance(total, int) and isinstance(offset, int):
+        current_end = offset + len(elements)
+        if current_end <= total:
+            next_offset = current_end + 1
+        if next_offset and next_offset > total:
+            next_offset = None
+
+    return {
+        "_type": memberships_result.get("_type", "Collection"),
+        "total": total,
+        "count": len(elements),
+        "pageSize": page_size,
+        "offset": offset,
+        "preview_count": len(items),
+        "truncated": bool(total) and isinstance(total, int) and total > (offset - 1 + len(items)),
+        "next_offset": next_offset,
+        "items": items,
+    }
+
+
 def _work_package_status_from_item(item: dict[str, Any]) -> str:
     links = item.get("_links") if isinstance(item.get("_links"), dict) else {}
     status = links.get("status") if isinstance(links.get("status"), dict) else None
@@ -447,6 +578,8 @@ def _render_project_detail_markdown(payload: dict[str, Any]) -> str:
     project = payload.get("project") if isinstance(payload.get("project"), dict) else {}
     work_packages = payload.get("work_packages") if isinstance(payload.get("work_packages"), dict) else {}
     wp_items = work_packages.get("items") if isinstance(work_packages.get("items"), list) else []
+    memberships = payload.get("memberships") if isinstance(payload.get("memberships"), dict) else {}
+    member_items = memberships.get("items") if isinstance(memberships.get("items"), list) else []
 
     name = project.get("name") or NO_DATA_TEXT
     project_id = project.get("id") or NO_DATA_TEXT
@@ -508,6 +641,65 @@ def _render_project_detail_markdown(payload: dict[str, Any]) -> str:
                 "Hay más resultados. Si quieres continuar, dime 'continuar' y te muestro los siguientes 20."
             )
         lines.append("También puedo filtrar por estado o por texto del nombre.")
+
+    # Project memberships (people involved)
+    if memberships:
+        lines.append("")
+        lines.append("Involucrados del proyecto:")
+
+        members_total = memberships.get("total", NO_DATA_TEXT)
+        members_preview_count = memberships.get("preview_count", len(member_items))
+        members_truncated = bool(memberships.get("truncated"))
+        members_next_offset = memberships.get("next_offset")
+        members_offset = memberships.get("offset")
+        members_page_size = memberships.get("pageSize")
+
+        lines.append(f"Total de miembros: {members_total}")
+
+        if memberships.get("_error"):
+            lines.append(f"(Error obteniendo miembros: {memberships.get('_error')})")
+        else:
+            lines.append("")
+            lines.append("| ID | Nombre | Rol | Membership ID |")
+            lines.append("|---:|---|---|---:|")
+
+            for item in member_items:
+                if not isinstance(item, dict):
+                    continue
+                principal_id = _escape_md(item.get("principal_id"))
+                principal_title = _escape_md(item.get("principal_title"))
+                role_titles = item.get("role_titles")
+                if isinstance(role_titles, list):
+                    roles = ", ".join(
+                        str(x) for x in role_titles if isinstance(x, str) and x.strip()
+                    )
+                elif isinstance(role_titles, str):
+                    roles = role_titles.strip()
+                else:
+                    roles = ""
+                roles = _escape_md(roles or NO_DATA_TEXT)
+                membership_id = _escape_md(item.get("membership_id"))
+
+                lines.append(f"| {principal_id} | {principal_title} | {roles} | {membership_id} |")
+
+            lines.append("")
+            lines.append(f"Mostrando {members_preview_count} de {members_total} miembros.")
+            if members_truncated:
+                extra = []
+                if isinstance(members_offset, int) and isinstance(members_page_size, int):
+                    extra.append(
+                        f"Página actual: offset={members_offset}, pageSize={members_page_size}."
+                    )
+                if isinstance(members_next_offset, int):
+                    extra.append(
+                        f"Para continuar: solicita más con `OpenProject_GetProject(project_id={project_id}, memberships_offset={members_next_offset}, max_memberships=20)`."
+                    )
+                if extra:
+                    lines.append(" ".join(extra))
+                else:
+                    lines.append(
+                        "Hay más miembros. Si quieres continuar, dime 'continuar' y te muestro los siguientes 20."
+                    )
 
     return "\n".join(lines).strip()
 
@@ -778,7 +970,11 @@ async def openproject_search_projects(
 
 @tool("OpenProject_GetProject")
 async def openproject_get_project(
-    project_id: int, max_work_packages: int = 20, work_packages_offset: int = 1
+    project_id: int,
+    max_work_packages: int = 20,
+    work_packages_offset: int = 1,
+    max_memberships: int = 50,
+    memberships_offset: int = 1,
 ) -> dict[str, Any]:
     """
     Get project details by ID, including a preview table of work packages.
@@ -794,6 +990,12 @@ async def openproject_get_project(
         return {"result": _safe_str(project_result)}
 
     project = _extract_project_fields(project_result)
+
+    memberships_payload = await _list_project_memberships(
+        project_id=project_id,
+        max_memberships=max_memberships,
+        memberships_offset=memberships_offset,
+    )
 
     max_work_packages = max(1, min(int(max_work_packages), 50))
     work_packages_offset = max(1, int(work_packages_offset))
@@ -816,6 +1018,7 @@ async def openproject_get_project(
                 "truncated": False,
                 "items": [],
             },
+            "memberships": memberships_payload,
         }
         payload["rendered"] = _render_project_detail_markdown(payload)
         return payload
@@ -824,6 +1027,7 @@ async def openproject_get_project(
         payload = {
             "project": project,
             "work_packages": {"total": NO_DATA_TEXT, "preview_count": 0, "truncated": False, "items": []},
+            "memberships": memberships_payload,
         }
         payload["rendered"] = _render_project_detail_markdown(payload)
         return payload
@@ -904,7 +1108,7 @@ async def openproject_get_project(
         "items": wp_items,
     }
 
-    payload = {"project": project, "work_packages": work_packages}
+    payload = {"project": project, "work_packages": work_packages, "memberships": memberships_payload}
     payload["rendered"] = _render_project_detail_markdown(payload)
     return payload
 
