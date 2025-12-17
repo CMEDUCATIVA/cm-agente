@@ -82,8 +82,10 @@ def get_model(model_name: AllModelEnum, /) -> ModelT:
             model=settings.COMPATIBLE_MODEL,
             temperature=0.5,
             streaming=True,
-            openai_api_base=settings.COMPATIBLE_BASE_URL,
-            openai_api_key=settings.COMPATIBLE_API_KEY,
+            base_url=settings.COMPATIBLE_BASE_URL,
+            api_key=settings.COMPATIBLE_API_KEY.get_secret_value()
+            if settings.COMPATIBLE_API_KEY
+            else None,
         )
     if model_name in AzureOpenAIModelName:
         if not settings.AZURE_OPENAI_API_KEY or not settings.AZURE_OPENAI_ENDPOINT:
@@ -103,8 +105,10 @@ def get_model(model_name: AllModelEnum, /) -> ModelT:
             model=api_model_name,
             temperature=0.5,
             streaming=True,
-            openai_api_base="https://api.deepseek.com",
-            openai_api_key=settings.DEEPSEEK_API_KEY,
+            base_url="https://api.deepseek.com",
+            api_key=settings.DEEPSEEK_API_KEY.get_secret_value()
+            if settings.DEEPSEEK_API_KEY
+            else None,
         )
     if model_name in AnthropicModelName:
         return ChatAnthropic(model=api_model_name, temperature=0.5, streaming=True)
