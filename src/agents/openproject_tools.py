@@ -1,10 +1,15 @@
 import base64
+import asyncio
 from typing import Any
 
 import httpx
 from langchain_core.tools import BaseTool, tool
 
 from core import settings
+
+
+NO_DATA_TEXT = "Aún no hay datos"
+NO_DESCRIPTION_TEXT = "Sin descripción"
 
 
 def _safe_str(x: Any) -> str:
@@ -75,6 +80,83 @@ def _summarize_work_package(result: Any) -> dict[str, Any]:
         "description_raw": description_raw,
         "percentageDone": result.get("percentageDone"),
         "_links": result.get("_links"),
+    }
+
+
+def _extract_description_raw(value: Any, *, max_len: int = 2000) -> str | None:
+    if isinstance(value, str):
+        raw = value
+    elif isinstance(value, dict):
+        raw = value.get("raw") if isinstance(value.get("raw"), str) else None
+        if raw is None and isinstance(value.get("html"), str):
+            raw = value.get("html")
+    else:
+        raw = None
+
+    if raw is None:
+        return None
+    if len(raw) > max_len:
+        return raw[:max_len] + "...(truncated)"
+    return raw
+
+
+def _display_or_no_data(value: Any) -> Any:
+    if value is None:
+        return NO_DATA_TEXT
+    if isinstance(value, str) and not value.strip():
+        return NO_DATA_TEXT
+    if isinstance(value, (list, dict)) and not value:
+        return NO_DATA_TEXT
+    return value
+
+
+async def _count_work_packages(*, project_id: int, status: str = "all") -> tuple[int | None, dict[str, Any] | None]:
+    """
+    Best-effort count of work packages for a project.
+
+    We rely on the MCP adapter returning a collection payload with a `total` field.
+    We also pass `page_size=1` to reduce payload if the adapter supports it.
+    """
+    result = await _post_tool(
+        "/tools/list_work_packages",
+        params={
+            "project_id": project_id,
+            "status": status,
+            "page_size": 1,
+        },
+    )
+    if isinstance(result, dict) and result.get("_error"):
+        return None, result
+
+    if isinstance(result, dict) and isinstance(result.get("total"), int):
+        return int(result["total"]), None
+
+    if isinstance(result, dict):
+        embedded = result.get("_embedded") if isinstance(result.get("_embedded"), dict) else {}
+        items = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
+        total = result.get("total")
+        if isinstance(total, int):
+            return total, None
+        return len(items), None
+
+    return None, {"_error": "openproject_mcp_unexpected_response", "result": _safe_str(result)}
+
+
+def _project_preview(item: dict[str, Any]) -> dict[str, Any]:
+    description_raw = _extract_description_raw(item.get("description"))
+    if description_raw is None or (isinstance(description_raw, str) and not description_raw.strip()):
+        description_value: Any = NO_DESCRIPTION_TEXT
+    else:
+        description_value = description_raw
+    return {
+        "id": item.get("id"),
+        "identifier": item.get("identifier"),
+        "name": item.get("name"),
+        "active": item.get("active"),
+        "public": item.get("public"),
+        "description_raw": description_value,
+        "createdAt": _display_or_no_data(item.get("createdAt")),
+        "updatedAt": _display_or_no_data(item.get("updatedAt")),
     }
 
 
@@ -164,17 +246,119 @@ async def openproject_test_connection() -> dict[str, Any]:
 
 
 @tool("OpenProject_ListProjects")
-async def openproject_list_projects(active_only: bool = True, max_items: int = 50) -> dict[str, Any]:
-    """List projects (returns a compact preview to avoid huge prompts)."""
+async def openproject_list_projects(active_only: bool = True, max_items: int = 10) -> dict[str, Any]:
+    """
+    List projects (10 items by default) with a compact preview.
+
+    Includes: description, createdAt/updatedAt, and a best-effort count of work packages.
+    """
     result = await _post_tool("/tools/list_projects", params={"active_only": active_only})
     if isinstance(result, dict) and result.get("_error"):
         return result
-    return _compact_collection(
-        result,
-        max_items=max_items,
-        fields=["id", "name", "identifier", "active", "public"],
-        title_field="name",
-    )
+
+    if not isinstance(result, dict):
+        return {"result": _safe_str(result)}
+
+    embedded = result.get("_embedded") if isinstance(result.get("_embedded"), dict) else {}
+    items = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
+    total = result.get("total", len(items))
+
+    max_items = max(1, min(int(max_items), 50))
+    preview_src = [i for i in items[:max_items] if isinstance(i, dict)]
+    preview = [_project_preview(i) for i in preview_src]
+
+    sem = asyncio.Semaphore(4)
+
+    async def add_counts(project: dict[str, Any]) -> None:
+        project_id = project.get("id")
+        if not isinstance(project_id, int):
+            project["work_packages_total"] = NO_DATA_TEXT
+            project["work_packages_error"] = {"_error": "missing_project_id"}
+            return
+        async with sem:
+            count, error = await _count_work_packages(project_id=project_id, status="all")
+        project["work_packages_total"] = count if isinstance(count, int) else NO_DATA_TEXT
+        if error:
+            project["work_packages_error"] = error
+
+    await asyncio.gather(*(add_counts(p) for p in preview))
+
+    counted = sum(1 for p in preview if isinstance(p.get("work_packages_total"), int))
+
+    truncated = False
+    if isinstance(total, int):
+        truncated = total > len(preview)
+    else:
+        truncated = len(items) > max_items
+
+    return {
+        "_type": result.get("_type", "Collection"),
+        "total": total,
+        "count": len(items),
+        "preview_count": len(preview),
+        "truncated": truncated,
+        "work_packages_counts": {"counted": counted, "attempted": len(preview)},
+        "summary": f"Mostrando {len(preview)} de {total} proyectos.",
+        "items": preview,
+        "note": f"Mostrando solo los primeros {max_items} proyectos. Si deseas un proyecto en específico, dime el nombre (o parte del nombre) y lo busco.",
+    }
+
+
+@tool("OpenProject_SearchProjects")
+async def openproject_search_projects(
+    name_contains: str, active_only: bool = True, max_items: int = 10
+) -> dict[str, Any]:
+    """Search projects by name (server doesn't support filtering, so we filter client-side)."""
+    result = await _post_tool("/tools/list_projects", params={"active_only": active_only})
+    if isinstance(result, dict) and result.get("_error"):
+        return result
+
+    if not isinstance(result, dict):
+        return {"result": _safe_str(result)}
+
+    embedded = result.get("_embedded") if isinstance(result.get("_embedded"), dict) else {}
+    items = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
+    needle = name_contains.strip().lower()
+    matches = [
+        i
+        for i in items
+        if isinstance(i, dict) and isinstance(i.get("name"), str) and needle in i["name"].lower()
+    ]
+
+    max_items = max(1, min(int(max_items), 50))
+    preview_src = matches[:max_items]
+    preview = [_project_preview(i) for i in preview_src if isinstance(i, dict)]
+
+    sem = asyncio.Semaphore(4)
+
+    async def add_counts(project: dict[str, Any]) -> None:
+        project_id = project.get("id")
+        if not isinstance(project_id, int):
+            project["work_packages_total"] = NO_DATA_TEXT
+            project["work_packages_error"] = {"_error": "missing_project_id"}
+            return
+        async with sem:
+            count, error = await _count_work_packages(project_id=project_id, status="all")
+        project["work_packages_total"] = count if isinstance(count, int) else NO_DATA_TEXT
+        if error:
+            project["work_packages_error"] = error
+
+    await asyncio.gather(*(add_counts(p) for p in preview))
+
+    counted = sum(1 for p in preview if isinstance(p.get("work_packages_total"), int))
+
+    return {
+        "_type": "Collection",
+        "total": len(matches),
+        "count": len(matches),
+        "preview_count": len(preview),
+        "truncated": len(matches) > max_items,
+        "work_packages_counts": {"counted": counted, "attempted": len(preview)},
+        "summary": f"Mostrando {len(preview)} de {len(matches)} proyectos que coinciden.",
+        "query": name_contains,
+        "items": preview,
+        "note": "Si no ves el proyecto, intenta con otra parte del nombre o solicita el ID del proyecto.",
+    }
 
 
 @tool("OpenProject_GetProject")
@@ -300,6 +484,7 @@ async def openproject_rest_list_projects(active: bool = True) -> dict[str, Any]:
 openproject_tools: list[BaseTool] = [
     openproject_test_connection,
     openproject_list_projects,
+    openproject_search_projects,
     openproject_get_project,
     openproject_list_work_packages,
     openproject_get_work_package,
