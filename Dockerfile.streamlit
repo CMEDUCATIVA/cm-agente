@@ -12,6 +12,9 @@ RUN pip install --no-cache-dir uv
 # Install only the dependencies needed for the client application.
 RUN uv sync --frozen --only-group client
 
+# Plotly (para gráficos en el chat) y Kaleido (PNG opcional)
+RUN pip install --no-cache-dir plotly kaleido
+
 COPY src/client/ ./client/
 COPY src/schema/ ./schema/
 COPY src/voice/ ./voice/
