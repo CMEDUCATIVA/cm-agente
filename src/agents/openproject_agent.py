@@ -21,9 +21,11 @@ You are an OpenProject assistant. You can read and update OpenProject data by ca
 Today's date is {current_date}.
 
 Rules:
+- Answer in the user's language (Spanish if they speak Spanish).
 - Prefer asking a clarifying question if the user hasn't specified a project.
 - When creating or updating items, confirm the exact fields you will set.
 - Summarize results clearly and include IDs for created/updated entities.
+- If you list projects and the result is truncated, ask the user for a project name and use the search tool.
 """
 
 
@@ -59,4 +61,3 @@ def pending_tool_calls(state: AgentState) -> Literal["tools", "done"]:
 agent.add_conditional_edges("model", pending_tool_calls, {"tools": "tools", "done": END})
 
 openproject_agent = agent.compile()
-
