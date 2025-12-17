@@ -186,6 +186,8 @@ class Settings(BaseSettings):
                         self.DEFAULT_MODEL = OpenAIModelName.GPT_5_NANO
                     self.AVAILABLE_MODELS.update(set(OpenAIModelName))
                 case Provider.OPENAI_COMPATIBLE:
+                    if not self.COMPATIBLE_API_KEY:
+                        raise ValueError("COMPATIBLE_API_KEY must be set for openai-compatible provider")
                     if self.DEFAULT_MODEL is None:
                         self.DEFAULT_MODEL = OpenAICompatibleName.OPENAI_COMPATIBLE
                     self.AVAILABLE_MODELS.update(set(OpenAICompatibleName))
