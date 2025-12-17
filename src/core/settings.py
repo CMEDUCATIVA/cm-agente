@@ -116,6 +116,12 @@ class Settings(BaseSettings):
     GITHUB_PAT: SecretStr | None = None
     MCP_GITHUB_SERVER_URL: str = "https://api.githubcopilot.com/mcp/"
 
+    # OpenProject MCP (HTTP adapter) configuration
+    OPENPROJECT_MCP_URL: str | None = None
+    OPENPROJECT_MCP_HTTP_AUTH_ENABLED: bool = False
+    OPENPROJECT_MCP_HTTP_AUTH_USERNAME: str | None = None
+    OPENPROJECT_MCP_HTTP_AUTH_PASSWORD: SecretStr | None = None
+
     LANGCHAIN_TRACING_V2: bool = False
     LANGCHAIN_PROJECT: str = "default"
     LANGCHAIN_ENDPOINT: Annotated[str, BeforeValidator(check_str_is_http)] = (
