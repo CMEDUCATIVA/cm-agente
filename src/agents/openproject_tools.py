@@ -159,6 +159,22 @@ def _summarize_work_package(result: Any) -> dict[str, Any]:
     }
 
 
+def _work_package_preview(item: dict[str, Any]) -> dict[str, Any]:
+    description_raw = _extract_description_raw(item.get("description"), max_len=1200)
+    if description_raw is None or (isinstance(description_raw, str) and not description_raw.strip()):
+        description_value: Any = NO_DESCRIPTION_TEXT
+    else:
+        description_value = _summarize_text(description_raw, max_len=240)
+    return {
+        "id": item.get("id"),
+        "subject": item.get("subject"),
+        "description_raw": description_value,
+        "createdAt": _display_date_or_no_data(item.get("createdAt")),
+        "updatedAt": _display_date_or_no_data(item.get("updatedAt")),
+        "overallCosts": _extract_cost_total(item),
+    }
+
+
 def _extract_description_raw(value: Any, *, max_len: int = 2000) -> str | None:
     if isinstance(value, str):
         raw = value
@@ -275,6 +291,109 @@ def _render_projects_markdown(payload: dict[str, Any]) -> str:
     if truncated:
         lines.append("")
         lines.append("Para ver un proyecto específico, dime el nombre (o parte del nombre) y lo busco.")
+    return "\n".join(lines).strip()
+
+
+def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
+    work_packages = payload.get("work_packages") if isinstance(payload.get("work_packages"), dict) else {}
+    memberships = payload.get("memberships") if isinstance(payload.get("memberships"), dict) else {}
+    items = work_packages.get("items") if isinstance(work_packages.get("items"), list) else []
+    member_items = memberships.get("items") if isinstance(memberships.get("items"), list) else []
+
+    total = work_packages.get("total", NO_DATA_TEXT)
+    preview_count = work_packages.get("preview_count", len(items))
+    truncated = bool(work_packages.get("truncated"))
+    next_offset = work_packages.get("next_offset")
+    offset = work_packages.get("offset")
+    page_size = work_packages.get("pageSize")
+    status = payload.get("status", NO_DATA_TEXT)
+    project_id = payload.get("project_id", NO_DATA_TEXT)
+
+    lines: list[str] = []
+    lines.append(f"Paquetes de trabajo (mostrando {preview_count} de {total})")
+    lines.append(f"- Proyecto ID: {project_id} | Estado: {status}")
+    lines.append("")
+    lines.append("| ID | Nombre | Descripcion | Creado | Actualizado | Costo total |")
+    lines.append("|---:|---|---|---|---|---:|")
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        wp_id = _escape_md(item.get("id"))
+        subject = _escape_md(item.get("subject"))
+        description = _escape_md(item.get("description_raw") or NO_DESCRIPTION_TEXT)
+        created = _escape_md(item.get("createdAt"))
+        updated = _escape_md(item.get("updatedAt"))
+        overall_costs = _escape_md(item.get("overallCosts"))
+        lines.append(
+            f"| {wp_id} | {subject} | {description} | {created} | {updated} | {overall_costs} |"
+        )
+
+    lines.append("")
+    lines.append(f"Total de paquetes de trabajo: {total}")
+    if truncated:
+        extra = []
+        if isinstance(offset, int) and isinstance(page_size, int):
+            extra.append(f"Pagina actual: offset={offset}, pageSize={page_size}.")
+        if isinstance(next_offset, int):
+            extra.append(
+                f"Para continuar: `OpenProject_ListWorkPackages(project_id={project_id}, status='{status}', max_items=20, work_packages_offset={next_offset})`."
+            )
+        if extra:
+            lines.append(" ".join(extra))
+        else:
+            lines.append("Hay mas resultados. Si quieres continuar, dime 'continuar'.")
+
+    if memberships:
+        lines.append("")
+        lines.append("Involucrados del proyecto:")
+        members_total = memberships.get("total", NO_DATA_TEXT)
+        members_preview_count = memberships.get("preview_count", len(member_items))
+        members_truncated = bool(memberships.get("truncated"))
+        members_next_offset = memberships.get("next_offset")
+        members_offset = memberships.get("offset")
+        members_page_size = memberships.get("pageSize")
+
+        lines.append(f"Total de miembros: {members_total}")
+        if memberships.get("_error"):
+            lines.append(f"(Error obteniendo miembros: {memberships.get('_error')})")
+        else:
+            lines.append("")
+            lines.append("| ID | Nombre | Rol | Membership ID |")
+            lines.append("|---:|---|---|---:|")
+            for item in member_items:
+                if not isinstance(item, dict):
+                    continue
+                principal_id = _escape_md(item.get("principal_id"))
+                principal_title = _escape_md(item.get("principal_title"))
+                role_titles = item.get("role_titles")
+                if isinstance(role_titles, list):
+                    roles = ", ".join(str(x) for x in role_titles if isinstance(x, str) and x.strip())
+                elif isinstance(role_titles, str):
+                    roles = role_titles.strip()
+                else:
+                    roles = ""
+                roles = _escape_md(roles or NO_DATA_TEXT)
+                membership_id = _escape_md(item.get("membership_id"))
+                lines.append(f"| {principal_id} | {principal_title} | {roles} | {membership_id} |")
+
+            lines.append("")
+            lines.append(f"Mostrando {members_preview_count} de {members_total} miembros.")
+            if members_truncated:
+                extra = []
+                if isinstance(members_offset, int) and isinstance(members_page_size, int):
+                    extra.append(
+                        f"Pagina actual: offset={members_offset}, pageSize={members_page_size}."
+                    )
+                if isinstance(members_next_offset, int):
+                    extra.append(
+                        f"Para continuar: `OpenProject_ListWorkPackages(project_id={project_id}, status='{status}', max_items={preview_count}, work_packages_offset={offset}, max_memberships=20, memberships_offset={members_next_offset})`."
+                    )
+                if extra:
+                    lines.append(" ".join(extra))
+                else:
+                    lines.append("Hay mas miembros. Si quieres continuar, dime 'continuar'.")
+
     return "\n".join(lines).strip()
 
 
@@ -1115,24 +1234,81 @@ async def openproject_get_project(
 
 @tool("OpenProject_ListWorkPackages")
 async def openproject_list_work_packages(
-    project_id: int, status: str = "open", max_items: int = 50
+    project_id: int,
+    status: str = "open",
+    max_items: int = 50,
+    work_packages_offset: int = 1,
+    max_memberships: int = 50,
+    memberships_offset: int = 1,
 ) -> dict[str, Any]:
-    """List work packages by project ID (compact preview to avoid huge prompts)."""
+    """
+    List work packages by project ID with a compact preview and project memberships.
+
+    Returns:
+    - work_packages: total, pagination, and items with id/subject/description/createdAt/updatedAt/overallCosts
+    - memberships: project members preview (involucrados)
+    - rendered: Markdown summary for chat
+    """
+    max_items = max(1, min(int(max_items), 50))
+    work_packages_offset = max(1, int(work_packages_offset))
     result = await _post_tool(
         "/tools/list_work_packages",
         params={
             "project_id": project_id,
             "status": status,
+            "page_size": max_items,
+            "offset": work_packages_offset,
         },
     )
     if isinstance(result, dict) and result.get("_error"):
         return result
-    return _compact_collection(
-        result,
-        max_items=max_items,
-        fields=["id", "subject", "percentageDone"],
-        title_field="subject",
+    if not isinstance(result, dict):
+        return {"result": _safe_str(result)}
+
+    embedded = result.get("_embedded") if isinstance(result.get("_embedded"), dict) else {}
+    elements = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
+    items = [e for e in elements if isinstance(e, dict)]
+
+    total = result.get("total", len(items))
+    page_size = result.get("pageSize", max_items)
+    offset = result.get("offset", work_packages_offset)
+
+    preview = [_work_package_preview(it) for it in items[:max_items]]
+
+    next_offset: int | None = None
+    if isinstance(total, int) and isinstance(offset, int):
+        current_end = offset + len(preview)
+        if current_end <= total:
+            next_offset = current_end + 1
+        if next_offset and next_offset > total:
+            next_offset = None
+
+    work_packages_payload = {
+        "_type": result.get("_type", "Collection"),
+        "total": total,
+        "count": len(items),
+        "pageSize": page_size,
+        "offset": offset,
+        "preview_count": len(preview),
+        "truncated": bool(total) and isinstance(total, int) and total > (offset - 1 + len(preview)),
+        "next_offset": next_offset,
+        "items": preview,
+    }
+
+    memberships_payload = await _list_project_memberships(
+        project_id=project_id,
+        max_memberships=max_memberships,
+        memberships_offset=memberships_offset,
     )
+
+    payload = {
+        "project_id": project_id,
+        "status": status,
+        "work_packages": work_packages_payload,
+        "memberships": memberships_payload,
+    }
+    payload["rendered"] = _render_work_packages_markdown(payload)
+    return payload
 
 
 @tool("OpenProject_GetWorkPackage")
