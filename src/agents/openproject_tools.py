@@ -349,17 +349,15 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
 
         lines.append(f"Paquete de trabajo ID: {wp_id}")
         lines.append("")
-        lines.append(f"| **Nombre** | {subject} |")
-        lines.append("|---|---|")
-        lines.append(f"| **ID** | {wp_id} | **Tipo** | {wp_type} | **Estado** | {wp_status} |")
+        lines.append("| **Campo** | **Valor** | **Campo** | **Valor** | **Campo** | **Valor** |")
         lines.append("|---|---|---|---|---|---|")
+        lines.append(f"| **Nombre** | {subject} |  |  |  |  |")
+        lines.append(f"| **ID** | {wp_id} | **Tipo** | {wp_type} | **Estado** | {wp_status} |")
         lines.append(
             f"| **Creador** | {author_display} | **Asignado a** | {assignee_name} | **Responsable** | {responsible_name} |"
         )
-        lines.append(f"| **Descripcion** | {description} |")
-        lines.append(f"| **Creado** | {created} |")
-        lines.append(f"| **Actualizado** | {updated} |")
-        lines.append(f"| **Costo total** | {overall_costs} |")
+        lines.append(f"| **Descripcion** | {description} | **Creado** | {created} | **Actualizado** | {updated} |")
+        lines.append(f"| **Costo total** | {overall_costs} |  |  |  |  |")
         lines.append("")
 
     lines.append("")
