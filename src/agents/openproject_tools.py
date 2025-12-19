@@ -313,8 +313,6 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
     lines.append(f"Paquetes de trabajo (mostrando {preview_count} de {total})")
     lines.append(f"- Proyecto ID: {project_id} | Estado: {status}")
     lines.append("")
-    lines.append("| ID | Nombre | Descripcion | Creado | Actualizado | Costo total |")
-    lines.append("|---:|---|---|---|---|---:|")
 
     for item in items:
         if not isinstance(item, dict):
@@ -325,9 +323,18 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
         created = _escape_md(item.get("createdAt"))
         updated = _escape_md(item.get("updatedAt"))
         overall_costs = _escape_md(item.get("overallCosts"))
-        lines.append(
-            f"| {wp_id} | {subject} | {description} | {created} | {updated} | {overall_costs} |"
-        )
+
+        lines.append(f"Paquete de trabajo ID: {wp_id}")
+        lines.append("")
+        lines.append("| Campo | Valor |")
+        lines.append("|---|---|")
+        lines.append(f"| ID | {wp_id} |")
+        lines.append(f"| Nombre | {subject} |")
+        lines.append(f"| Descripcion | {description} |")
+        lines.append(f"| Creado | {created} |")
+        lines.append(f"| Actualizado | {updated} |")
+        lines.append(f"| Costo total | {overall_costs} |")
+        lines.append("")
 
     lines.append("")
     lines.append(f"Total de paquetes de trabajo: {total}")
