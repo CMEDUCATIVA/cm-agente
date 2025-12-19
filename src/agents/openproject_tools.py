@@ -427,11 +427,11 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
     )
 
     lines.append("")
-    lines.append("| Campo |  |  | Personas | Total |")
-    lines.append("|---|---|---|---|---|")
-    lines.append(f"| Total de paquetes de trabajo |  | {total} |  | {total} |")
-    lines.append(f"| Total de involucrados |  |  | {involved_names_display} | {total_members_display} |")
-    lines.append(f"| Costo |  |  |  | {total_cost_display} |")
+    lines.append("| Campo | Personas | Total |")
+    lines.append("|---|---|---|")
+    lines.append(f"| Total de paquetes de trabajo |  | {total} |")
+    lines.append(f"| Total de involucrados | {involved_names_display} | {total_members_display} |")
+    lines.append(f"| Costo |  | {total_cost_display} |")
 
     return "\n".join(lines).strip()
 
@@ -1342,6 +1342,22 @@ async def openproject_list_work_packages(
     offset = result.get("offset", work_packages_offset)
 
     preview = [_work_package_preview(it) for it in items[:max_items]]
+
+    sem = asyncio.Semaphore(4)
+
+    async def enrich_cost(item: dict[str, Any]) -> dict[str, Any]:
+        wp_id = item.get("id")
+        if not isinstance(wp_id, int):
+            return item
+        async with sem:
+            detailed = await _post_tool("/tools/get_work_package", params={"work_package_id": wp_id})
+        if isinstance(detailed, dict) and not detailed.get("_error"):
+            cost = _extract_cost_total(detailed)
+            if cost != NO_DATA_TEXT:
+                item["overallCosts"] = cost
+        return item
+
+    preview = await asyncio.gather(*(enrich_cost(it) for it in preview))
 
     next_offset: int | None = None
     if isinstance(total, int) and isinstance(offset, int):
