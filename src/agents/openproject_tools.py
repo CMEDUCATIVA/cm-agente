@@ -378,56 +378,6 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
         else:
             lines.append("Hay mas resultados. Si quieres continuar, dime 'continuar'.")
 
-    if memberships:
-        lines.append("")
-        lines.append("Involucrados del proyecto:")
-        members_total = memberships.get("total", NO_DATA_TEXT)
-        members_preview_count = memberships.get("preview_count", len(member_items))
-        members_truncated = bool(memberships.get("truncated"))
-        members_next_offset = memberships.get("next_offset")
-        members_offset = memberships.get("offset")
-        members_page_size = memberships.get("pageSize")
-
-        lines.append(f"Total de miembros: {members_total}")
-        if memberships.get("_error"):
-            lines.append(f"(Error obteniendo miembros: {memberships.get('_error')})")
-        else:
-            lines.append("")
-            lines.append("| ID | Nombre | Rol | Membership ID |")
-            lines.append("|---:|---|---|---:|")
-            for item in member_items:
-                if not isinstance(item, dict):
-                    continue
-                principal_id = _escape_md(item.get("principal_id"))
-                principal_title = _escape_md(item.get("principal_title"))
-                role_titles = item.get("role_titles")
-                if isinstance(role_titles, list):
-                    roles = ", ".join(str(x) for x in role_titles if isinstance(x, str) and x.strip())
-                elif isinstance(role_titles, str):
-                    roles = role_titles.strip()
-                else:
-                    roles = ""
-                roles = _escape_md(roles or NO_DATA_TEXT)
-                membership_id = _escape_md(item.get("membership_id"))
-                lines.append(f"| {principal_id} | {principal_title} | {roles} | {membership_id} |")
-
-            lines.append("")
-            lines.append(f"Mostrando {members_preview_count} de {members_total} miembros.")
-            if members_truncated:
-                extra = []
-                if isinstance(members_offset, int) and isinstance(members_page_size, int):
-                    extra.append(
-                        f"Pagina actual: offset={members_offset}, pageSize={members_page_size}."
-                    )
-                if isinstance(members_next_offset, int):
-                    extra.append(
-                        f"Para continuar: `OpenProject_ListWorkPackages(project_id={project_id}, status='{status}', max_items={preview_count}, work_packages_offset={offset}, max_memberships=20, memberships_offset={members_next_offset})`."
-                    )
-                if extra:
-                    lines.append(" ".join(extra))
-                else:
-                    lines.append("Hay mas miembros. Si quieres continuar, dime 'continuar'.")
-
     # Summary table
     involved_names: list[str] = []
     for item in member_items:
@@ -477,10 +427,10 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
     )
 
     lines.append("")
-    lines.append("| Campo | Primera columna | Segunda columna | Personas | Total |")
+    lines.append("| Campo |  |  | Personas | Total |")
     lines.append("|---|---|---|---|---|")
     lines.append(f"| Total de paquetes de trabajo |  | {total} |  | {total} |")
-    lines.append(f"| Total de involucrados |  | {involved_names_display} | {total_members_display} |  |")
+    lines.append(f"| Total de involucrados |  |  | {involved_names_display} | {total_members_display} |")
     lines.append(f"| Costo |  |  |  | {total_cost_display} |")
 
     return "\n".join(lines).strip()
