@@ -351,12 +351,11 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"| **Nombre** | {subject} |")
         lines.append("|---|---|")
-        lines.append(f"| **ID** | {wp_id} |")
-        lines.append(f"| **Tipo** | {wp_type} |")
-        lines.append(f"| **Estado** | {wp_status} |")
-        lines.append(f"| **Creador** | {author_display} |")
-        lines.append(f"| **Asignado a** | {assignee_name} |")
-        lines.append(f"| **Responsable** | {responsible_name} |")
+        lines.append(f"| **ID** | {wp_id} | **Tipo** | {wp_type} | **Estado** | {wp_status} |")
+        lines.append("|---|---|---|---|---|---|")
+        lines.append(
+            f"| **Creador** | {author_display} | **Asignado a** | {assignee_name} | **Responsable** | {responsible_name} |"
+        )
         lines.append(f"| **Descripcion** | {description} |")
         lines.append(f"| **Creado** | {created} |")
         lines.append(f"| **Actualizado** | {updated} |")
