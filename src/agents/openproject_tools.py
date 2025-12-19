@@ -398,7 +398,7 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
                 return None
             for ch in ("$", "€", "£", "USD", "EUR", "COP"):
                 s = s.replace(ch, "")
-            s = s.replace(" ", "")
+            s = "".join(ch for ch in s if ch in "0123456789.,-")
             if "," in s and "." in s:
                 if s.rfind(",") > s.rfind("."):
                     s = s.replace(".", "").replace(",", ".")
