@@ -349,19 +349,18 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
 
         lines.append(f"Paquete de trabajo ID: {wp_id}")
         lines.append("")
-        lines.append("| Campo | Valor |")
+        lines.append(f"| **Nombre** | {subject} |")
         lines.append("|---|---|")
-        lines.append(f"| ID | {wp_id} |")
-        lines.append(f"| Tipo | {wp_type} |")
-        lines.append(f"| Estado | {wp_status} |")
-        lines.append(f"| Creador | {author_display} |")
-        lines.append(f"| Asignado a | {assignee_name} |")
-        lines.append(f"| Responsable | {responsible_name} |")
-        lines.append(f"| Nombre | {subject} |")
-        lines.append(f"| Descripcion | {description} |")
-        lines.append(f"| Creado | {created} |")
-        lines.append(f"| Actualizado | {updated} |")
-        lines.append(f"| Costo total | {overall_costs} |")
+        lines.append(f"| **ID** | {wp_id} |")
+        lines.append(f"| **Tipo** | {wp_type} |")
+        lines.append(f"| **Estado** | {wp_status} |")
+        lines.append(f"| **Creador** | {author_display} |")
+        lines.append(f"| **Asignado a** | {assignee_name} |")
+        lines.append(f"| **Responsable** | {responsible_name} |")
+        lines.append(f"| **Descripcion** | {description} |")
+        lines.append(f"| **Creado** | {created} |")
+        lines.append(f"| **Actualizado** | {updated} |")
+        lines.append(f"| **Costo total** | {overall_costs} |")
         lines.append("")
 
     lines.append("")
@@ -428,6 +427,61 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
                     lines.append(" ".join(extra))
                 else:
                     lines.append("Hay mas miembros. Si quieres continuar, dime 'continuar'.")
+
+    # Summary table
+    involved_names: list[str] = []
+    for item in member_items:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("principal_title")
+        if isinstance(name, str) and name.strip():
+            involved_names.append(name.strip())
+    if memberships and not involved_names and memberships.get("_error"):
+        involved_names = []
+
+    def _parse_cost_value(value: Any) -> float | None:
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            s = value.strip()
+            if not s:
+                return None
+            for ch in ("$", "€", "£", "USD", "EUR", "COP"):
+                s = s.replace(ch, "")
+            s = s.replace(",", "").strip()
+            try:
+                return float(s)
+            except Exception:
+                return None
+        return None
+
+    total_cost_value = 0.0
+    cost_count = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        val = _parse_cost_value(item.get("overallCosts"))
+        if val is not None:
+            total_cost_value += val
+            cost_count += 1
+
+    total_cost_display: Any
+    if cost_count > 0:
+        total_cost_display = f"{total_cost_value:.2f}"
+    else:
+        total_cost_display = NO_DATA_TEXT
+
+    involved_names_display = ", ".join(involved_names) if involved_names else NO_DATA_TEXT
+    total_members_display = (
+        memberships.get("total", len(member_items)) if memberships else NO_DATA_TEXT
+    )
+
+    lines.append("")
+    lines.append("| Campo | Primera columna | Segunda columna | Personas | Total |")
+    lines.append("|---|---|---|---|---|")
+    lines.append(f"| Total de paquetes de trabajo |  | {total} |  | {total} |")
+    lines.append(f"| Total de involucrados |  | {involved_names_display} | {total_members_display} |  |")
+    lines.append(f"| Costo |  |  |  | {total_cost_display} |")
 
     return "\n".join(lines).strip()
 
