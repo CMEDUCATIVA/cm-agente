@@ -398,7 +398,14 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
                 return None
             for ch in ("$", "€", "£", "USD", "EUR", "COP"):
                 s = s.replace(ch, "")
-            s = s.replace(",", "").strip()
+            s = s.replace(" ", "")
+            if "," in s and "." in s:
+                if s.rfind(",") > s.rfind("."):
+                    s = s.replace(".", "").replace(",", ".")
+                else:
+                    s = s.replace(",", "")
+            elif "," in s and "." not in s:
+                s = s.replace(",", ".")
             try:
                 return float(s)
             except Exception:
