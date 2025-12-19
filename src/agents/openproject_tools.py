@@ -165,8 +165,20 @@ def _work_package_preview(item: dict[str, Any]) -> dict[str, Any]:
         description_value: Any = NO_DESCRIPTION_TEXT
     else:
         description_value = _summarize_text(description_raw, max_len=240)
+    links = item.get("_links") if isinstance(item.get("_links"), dict) else {}
+    type_title = _extract_link_title(links.get("type"))
+    status_title = _extract_link_title(links.get("status"))
+    author_name, author_email = _extract_author_fields(item, links)
+    assignee_name = _extract_link_title(links.get("assignee"))
+    responsible_name = _extract_link_title(links.get("responsible"))
     return {
         "id": item.get("id"),
+        "type": type_title,
+        "status": status_title,
+        "author_name": author_name,
+        "author_email": author_email,
+        "assignee_name": assignee_name,
+        "responsible_name": responsible_name,
         "subject": item.get("subject"),
         "description_raw": description_value,
         "createdAt": _display_date_or_no_data(item.get("createdAt")),
@@ -318,17 +330,33 @@ def _render_work_packages_markdown(payload: dict[str, Any]) -> str:
         if not isinstance(item, dict):
             continue
         wp_id = _escape_md(item.get("id"))
+        wp_type = _escape_md(item.get("type"))
+        wp_status = _escape_md(item.get("status"))
+        author_name = _escape_md(item.get("author_name"))
+        author_email = _escape_md(item.get("author_email"))
+        assignee_name = _escape_md(item.get("assignee_name"))
+        responsible_name = _escape_md(item.get("responsible_name"))
         subject = _escape_md(item.get("subject"))
         description = _escape_md(item.get("description_raw") or NO_DESCRIPTION_TEXT)
         created = _escape_md(item.get("createdAt"))
         updated = _escape_md(item.get("updatedAt"))
         overall_costs = _escape_md(item.get("overallCosts"))
 
+        if author_email and author_email != NO_DATA_TEXT:
+            author_display = f"{author_name} <{author_email}>"
+        else:
+            author_display = author_name
+
         lines.append(f"Paquete de trabajo ID: {wp_id}")
         lines.append("")
         lines.append("| Campo | Valor |")
         lines.append("|---|---|")
         lines.append(f"| ID | {wp_id} |")
+        lines.append(f"| Tipo | {wp_type} |")
+        lines.append(f"| Estado | {wp_status} |")
+        lines.append(f"| Creador | {author_display} |")
+        lines.append(f"| Asignado a | {assignee_name} |")
+        lines.append(f"| Responsable | {responsible_name} |")
         lines.append(f"| Nombre | {subject} |")
         lines.append(f"| Descripcion | {description} |")
         lines.append(f"| Creado | {created} |")
@@ -434,6 +462,35 @@ def _extract_status_title(value: Any) -> str:
         if isinstance(title, str) and title.strip():
             return title.strip()
     return NO_DATA_TEXT
+
+
+def _extract_link_title(value: Any) -> str:
+    if isinstance(value, dict):
+        title = value.get("title")
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+    return NO_DATA_TEXT
+
+
+def _extract_author_fields(item: dict[str, Any], links: dict[str, Any]) -> tuple[str, str]:
+    author = item.get("author") if isinstance(item.get("author"), dict) else {}
+    name = author.get("name") if isinstance(author.get("name"), str) else None
+    if not name:
+        name = author.get("firstName") if isinstance(author.get("firstName"), str) else None
+        last = author.get("lastName") if isinstance(author.get("lastName"), str) else None
+        if name and last:
+            name = f"{name} {last}"
+        elif last:
+            name = last
+
+    email = author.get("email") if isinstance(author.get("email"), str) else None
+    if not email:
+        email = author.get("login") if isinstance(author.get("login"), str) else None
+
+    if not name:
+        name = _extract_link_title(links.get("author"))
+
+    return name or NO_DATA_TEXT, email or NO_DATA_TEXT
 
 
 def _extract_titles_from_links(value: Any) -> list[str]:
