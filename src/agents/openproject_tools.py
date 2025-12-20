@@ -112,6 +112,24 @@ def _load_report_template() -> str:
     return _REPORT_TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
+def _build_work_packages_report_html(
+    *,
+    project_id: int,
+    project_name: str,
+    items: list[dict[str, Any]],
+) -> str:
+    data = {
+        "project_name": project_name,
+        "project_id": project_id,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "items": items,
+    }
+    raw_json = json.dumps(data, ensure_ascii=True)
+    safe_json = _escape_template_literal(raw_json)
+    template = _load_report_template()
+    return template.replace("__DATA_JSON__", safe_json)
+
+
 def _compact_collection(
     result: Any,
     *,
@@ -1334,14 +1352,9 @@ async def openproject_list_work_packages(
     memberships_offset: int = 1,
 ) -> dict[str, Any]:
     """
-    List work packages by project ID with a compact preview and project memberships.
-
-    Returns:
-    - work_packages: total, pagination, and items with id/subject/description/createdAt/updatedAt/overallCosts
-    - memberships: project members preview (involucrados)
-    - rendered: Markdown summary for chat
+    List work packages and generate an HTML report download link.
     """
-    max_items = max(1, min(int(max_items), 50))
+    max_items = max(1, min(int(max_items), 200))
     work_packages_offset = max(1, int(work_packages_offset))
     result = await _post_tool(
         "/tools/list_work_packages",
@@ -1360,120 +1373,36 @@ async def openproject_list_work_packages(
     embedded = result.get("_embedded") if isinstance(result.get("_embedded"), dict) else {}
     elements = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
     items = [e for e in elements if isinstance(e, dict)]
-
-    total = result.get("total", len(items))
-    page_size = result.get("pageSize", max_items)
-    offset = result.get("offset", work_packages_offset)
-
-    preview = [_work_package_preview(it) for it in items[:max_items]]
-
-    sem = asyncio.Semaphore(4)
-
-    async def enrich_cost(item: dict[str, Any]) -> dict[str, Any]:
-        wp_id = item.get("id")
-        if not isinstance(wp_id, int):
-            return item
-        async with sem:
-            detailed = await _post_tool("/tools/get_work_package", params={"work_package_id": wp_id})
-        if isinstance(detailed, dict) and not detailed.get("_error"):
-            cost = _extract_cost_total(detailed)
-            if cost != NO_DATA_TEXT:
-                item["overallCosts"] = cost
-        return item
-
-    preview = await asyncio.gather(*(enrich_cost(it) for it in preview))
-
-    next_offset: int | None = None
-    if isinstance(total, int) and isinstance(offset, int):
-        current_end = offset + len(preview)
-        if current_end <= total:
-            next_offset = current_end + 1
-        if next_offset and next_offset > total:
-            next_offset = None
-
-    work_packages_payload = {
-        "_type": result.get("_type", "Collection"),
-        "total": total,
-        "count": len(items),
-        "pageSize": page_size,
-        "offset": offset,
-        "preview_count": len(preview),
-        "truncated": bool(total) and isinstance(total, int) and total > (offset - 1 + len(preview)),
-        "next_offset": next_offset,
-        "items": preview,
-    }
-
-    memberships_payload = await _list_project_memberships(
-        project_id=project_id,
-        max_memberships=max_memberships,
-        memberships_offset=memberships_offset,
-    )
-
-    payload = {
-        "project_id": project_id,
-        "status": status,
-        "work_packages": work_packages_payload,
-        "memberships": memberships_payload,
-    }
-    payload["rendered"] = _render_work_packages_markdown(payload)
-    return payload
-
-
-@tool("OpenProject_GenerateWorkPackagesHtml")
-async def openproject_generate_work_packages_html(
-    project_id: int,
-    status: str = "all",
-    max_items: int = 200,
-) -> dict[str, Any]:
-    """
-    Generate an HTML report for work packages and return a download link.
-    """
-    max_items = max(1, min(int(max_items), 1000))
-    result = await _post_tool(
-        "/tools/list_work_packages",
-        params={
-            "project_id": project_id,
-            "status": status,
-            "page_size": max_items,
-            "offset": 1,
-        },
-    )
-    if isinstance(result, dict) and result.get("_error"):
-        return result
-    if not isinstance(result, dict):
-        return {"result": _safe_str(result)}
-
-    embedded = result.get("_embedded") if isinstance(result.get("_embedded"), dict) else {}
-    elements = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
-    items = [e for e in elements if isinstance(e, dict)]
-
     project_name = NO_DATA_TEXT
     project_result = await _post_tool("/tools/get_project", params={"project_id": project_id})
     if isinstance(project_result, dict) and not project_result.get("_error"):
         project_name = project_result.get("name") or project_name
 
-    data = {
-        "project_name": project_name,
-        "project_id": project_id,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
-        "items": items,
-    }
-    raw_json = json.dumps(data, ensure_ascii=True)
-    safe_json = _escape_template_literal(raw_json)
     try:
-        template = _load_report_template()
+        html = _build_work_packages_report_html(
+            project_id=project_id,
+            project_name=str(project_name),
+            items=items,
+        )
+        report_id = write_html_report(html)
+        download_url = f"{settings.BASE_URL}/download/{report_id}"
+        return {
+            "project_id": project_id,
+            "status": status,
+            "report_id": report_id,
+            "download_url": download_url,
+            "rendered": f"Reporte HTML generado. Descarga: {download_url}",
+        }
     except Exception as exc:
-        return {"_error": "openproject_report_template_missing", "detail": str(exc)}
+        return {
+            "_error": "openproject_report_generation_failed",
+            "detail": str(exc),
+            "project_id": project_id,
+            "status": status,
+            "rendered": "No se pudo generar el reporte HTML.",
+        }
 
-    html = template.replace("__DATA_JSON__", safe_json)
-    report_id = write_html_report(html)
-    download_url = f"{settings.BASE_URL}/download/{report_id}"
 
-    return {
-        "report_id": report_id,
-        "download_url": download_url,
-        "rendered": f"Reporte HTML generado. Descarga: {download_url}",
-    }
 
 
 @tool("OpenProject_GetWorkPackage")
@@ -1707,7 +1636,6 @@ openproject_tools: list[BaseTool] = [
     openproject_search_projects,
     openproject_get_project,
     openproject_list_work_packages,
-    openproject_generate_work_packages_html,
     openproject_get_work_package,
     openproject_create_work_package,
     openproject_update_work_package,
