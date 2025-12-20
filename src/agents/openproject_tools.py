@@ -12,12 +12,10 @@ from core import settings
 from core.report_store import write_html_report
 
 
-NO_DATA_TEXT = "Aún no hay datos"
-NO_DESCRIPTION_TEXT = "Sin descripción"
+NO_DATA_TEXT = "Aun no hay datos"
+NO_DESCRIPTION_TEXT = "Sin descripcion"
 
-_REPORT_TEMPLATE_PATH = (
-    Path(__file__).resolve().parents[1] / "template" / "cronograma_real_vs_planificado.html"
-)
+_REPORT_TEMPLATE_NAME = "reporte.html"
 
 
 def _safe_str(x: Any) -> str:
@@ -99,7 +97,7 @@ def _summarize_text(text: str, *, max_len: int = 180) -> str:
     cleaned = " ".join(text.replace("\r", " ").replace("\n", " ").split())
     if len(cleaned) <= max_len:
         return cleaned
-    return cleaned[:max_len].rstrip() + "…"
+    return cleaned[:max_len].rstrip() + "..."
 
 
 def _escape_template_literal(value: str) -> str:
@@ -107,10 +105,19 @@ def _escape_template_literal(value: str) -> str:
 
 
 def _load_report_template() -> str:
-    if not _REPORT_TEMPLATE_PATH.exists():
-        raise FileNotFoundError(f"Template not found: {_REPORT_TEMPLATE_PATH}")
-    return _REPORT_TEMPLATE_PATH.read_text(encoding="utf-8")
-
+    base = Path(__file__).resolve()
+    candidates = [
+        base.parents[1] / "template" / _REPORT_TEMPLATE_NAME,
+        base.parents[2] / "template" / _REPORT_TEMPLATE_NAME,
+        base.parents[2] / "src" / "template" / _REPORT_TEMPLATE_NAME,
+        Path.cwd() / "src" / "template" / _REPORT_TEMPLATE_NAME,
+        Path.cwd() / "template" / _REPORT_TEMPLATE_NAME,
+    ]
+    for path in candidates:
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+    checked = ", ".join(str(p) for p in candidates)
+    raise FileNotFoundError(f"Template not found. Checked: {checked}")
 
 def _build_work_packages_report_html(
     *,
@@ -1353,6 +1360,8 @@ async def openproject_list_work_packages(
 ) -> dict[str, Any]:
     """
     List work packages and generate an HTML report download link.
+
+    Returns only the download link metadata to avoid flooding chat output.
     """
     max_items = max(1, min(int(max_items), 200))
     work_packages_offset = max(1, int(work_packages_offset))
@@ -1373,6 +1382,7 @@ async def openproject_list_work_packages(
     embedded = result.get("_embedded") if isinstance(result.get("_embedded"), dict) else {}
     elements = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
     items = [e for e in elements if isinstance(e, dict)]
+
     project_name = NO_DATA_TEXT
     project_result = await _post_tool("/tools/get_project", params={"project_id": project_id})
     if isinstance(project_result, dict) and not project_result.get("_error"):
@@ -1387,23 +1397,15 @@ async def openproject_list_work_packages(
         report_id = write_html_report(html)
         download_url = f"{settings.BASE_URL}/download/{report_id}"
         return {
-            "project_id": project_id,
-            "status": status,
-            "report_id": report_id,
             "download_url": download_url,
-            "rendered": f"Reporte HTML generado. Descarga: {download_url}",
+            "rendered": f"{download_url}",
         }
     except Exception as exc:
         return {
             "_error": "openproject_report_generation_failed",
             "detail": str(exc),
-            "project_id": project_id,
-            "status": status,
             "rendered": "No se pudo generar el reporte HTML.",
         }
-
-
-
 
 @tool("OpenProject_GetWorkPackage")
 async def openproject_get_work_package(work_package_id: int) -> dict[str, Any]:
