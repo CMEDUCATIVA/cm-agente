@@ -1,16 +1,23 @@
 import base64
 import asyncio
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
 from langchain_core.tools import BaseTool, tool
 
 from core import settings
+from core.report_store import write_html_report
 
 
 NO_DATA_TEXT = "Aún no hay datos"
 NO_DESCRIPTION_TEXT = "Sin descripción"
+
+_REPORT_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[1] / "template" / "cronograma_real_vs_planificado.html"
+)
 
 
 def _safe_str(x: Any) -> str:
@@ -93,6 +100,16 @@ def _summarize_text(text: str, *, max_len: int = 180) -> str:
     if len(cleaned) <= max_len:
         return cleaned
     return cleaned[:max_len].rstrip() + "…"
+
+
+def _escape_template_literal(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+
+
+def _load_report_template() -> str:
+    if not _REPORT_TEMPLATE_PATH.exists():
+        raise FileNotFoundError(f"Template not found: {_REPORT_TEMPLATE_PATH}")
+    return _REPORT_TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
 def _compact_collection(
@@ -1402,6 +1419,63 @@ async def openproject_list_work_packages(
     return payload
 
 
+@tool("OpenProject_GenerateWorkPackagesHtml")
+async def openproject_generate_work_packages_html(
+    project_id: int,
+    status: str = "all",
+    max_items: int = 200,
+) -> dict[str, Any]:
+    """
+    Generate an HTML report for work packages and return a download link.
+    """
+    max_items = max(1, min(int(max_items), 1000))
+    result = await _post_tool(
+        "/tools/list_work_packages",
+        params={
+            "project_id": project_id,
+            "status": status,
+            "page_size": max_items,
+            "offset": 1,
+        },
+    )
+    if isinstance(result, dict) and result.get("_error"):
+        return result
+    if not isinstance(result, dict):
+        return {"result": _safe_str(result)}
+
+    embedded = result.get("_embedded") if isinstance(result.get("_embedded"), dict) else {}
+    elements = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
+    items = [e for e in elements if isinstance(e, dict)]
+
+    project_name = NO_DATA_TEXT
+    project_result = await _post_tool("/tools/get_project", params={"project_id": project_id})
+    if isinstance(project_result, dict) and not project_result.get("_error"):
+        project_name = project_result.get("name") or project_name
+
+    data = {
+        "project_name": project_name,
+        "project_id": project_id,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "items": items,
+    }
+    raw_json = json.dumps(data, ensure_ascii=True)
+    safe_json = _escape_template_literal(raw_json)
+    try:
+        template = _load_report_template()
+    except Exception as exc:
+        return {"_error": "openproject_report_template_missing", "detail": str(exc)}
+
+    html = template.replace("__DATA_JSON__", safe_json)
+    report_id = write_html_report(html)
+    download_url = f"{settings.BASE_URL}/download/{report_id}"
+
+    return {
+        "report_id": report_id,
+        "download_url": download_url,
+        "rendered": f"Reporte HTML generado. Descarga: {download_url}",
+    }
+
+
 @tool("OpenProject_GetWorkPackage")
 async def openproject_get_work_package(work_package_id: int) -> dict[str, Any]:
     """Get work package details by ID."""
@@ -1633,6 +1707,7 @@ openproject_tools: list[BaseTool] = [
     openproject_search_projects,
     openproject_get_project,
     openproject_list_work_packages,
+    openproject_generate_work_packages_html,
     openproject_get_work_package,
     openproject_create_work_package,
     openproject_update_work_package,
