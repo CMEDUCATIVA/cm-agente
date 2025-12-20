@@ -433,6 +433,7 @@ async def download_report(report_id: str) -> FileResponse:
         path,
         media_type="text/html",
         filename=f"reporte_{report_id}.html",
+        content_disposition_type="attachment",
     )
 
 
