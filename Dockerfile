@@ -21,6 +21,7 @@ COPY src/core/ ./core/
 COPY src/memory/ ./memory/
 COPY src/schema/ ./schema/
 COPY src/service/ ./service/
+COPY media/ ./media/
 COPY src/run_service.py .
 
 EXPOSE 8080
