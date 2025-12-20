@@ -107,11 +107,9 @@ def _escape_template_literal(value: str) -> str:
 def _load_report_template() -> str:
     base = Path(__file__).resolve()
     candidates = [
-        base.parents[1] / "template" / _REPORT_TEMPLATE_NAME,
-        base.parents[2] / "template" / _REPORT_TEMPLATE_NAME,
-        base.parents[2] / "src" / "template" / _REPORT_TEMPLATE_NAME,
-        Path.cwd() / "src" / "template" / _REPORT_TEMPLATE_NAME,
-        Path.cwd() / "template" / _REPORT_TEMPLATE_NAME,
+        base.parents[2] / "media" / _REPORT_TEMPLATE_NAME,
+        base.parents[3] / "media" / _REPORT_TEMPLATE_NAME,
+        Path.cwd() / "media" / _REPORT_TEMPLATE_NAME,
     ]
     for path in candidates:
         if path.exists():
