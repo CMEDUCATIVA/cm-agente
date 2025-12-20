@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core._api import LangChainBetaWarning
@@ -23,6 +23,7 @@ from langsmith import Client as LangsmithClient
 
 from agents import DEFAULT_AGENT, AgentGraph, get_agent, get_all_agent_info, load_agent
 from core import settings
+from core.report_store import resolve_report_path
 from memory import initialize_database, initialize_store
 from schema import (
     ChatHistory,
@@ -421,6 +422,18 @@ async def history(input: ChatHistoryInput) -> ChatHistory:
     except Exception as e:
         logger.error(f"An exception occurred: {e}")
         raise HTTPException(status_code=500, detail="Unexpected error")
+
+
+@router.get("/download/{report_id}")
+async def download_report(report_id: str) -> FileResponse:
+    path = resolve_report_path(report_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return FileResponse(
+        path,
+        media_type="text/html",
+        filename=f"reporte_{report_id}.html",
+    )
 
 
 @app.get("/health")
