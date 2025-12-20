@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Cronograma Real vs Planificado</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #ffffff;
+      --accent: #1d4ed8;
+      --text: #0f172a;
+      --muted: #475569;
+      --border: #e2e8f0;
+      --success: #16a34a;
+      --warning: #ea580c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0 auto;
+      padding: 16px;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      max-width: 297mm; /* A4 horizontal */
+    }
+    h1, h2, h3 { margin: 0 0 10px; font-weight: 700; }
+    .header {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 12px;
+      width: 100%;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: #eef2ff;
+      border: 1px solid #dfe4ff;
+      color: var(--text);
+      font-weight: 600;
+      font-size: 12px;
+    }
+    .graph-panel .badge { margin-bottom: 20px; }
+    .project-title {
+      font-size: 20px;
+      padding: 10px 14px;
+      font-weight: 700;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      box-shadow: 0 8px 26px rgba(15, 23, 42, 0.08);
+      margin-bottom: 12px;
+      position: relative;
+    }
+    .graph-panel { padding-bottom: 48px; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .input {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      color: var(--text);
+      min-width: 220px;
+    }
+    .btn {
+      background: var(--accent);
+      border: none;
+      color: white;
+      padding: 5px 9px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+      transition: transform 0.08s ease, box-shadow 0.15s ease;
+      box-shadow: 0 4px 14px rgba(29, 78, 216, 0.25);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+    .btn svg {
+      width: 16px;
+      height: 16px;
+      fill: white;
+    }
+    .btn-ghost {
+      background: #0f172a;
+      color: white;
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.25);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 6px;
+      font-size: 12px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 700; letter-spacing: 0.01em; }
+    tr:hover { background: #f8fafc; }
+    .status {
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 11px;
+      display: inline-block;
+      background: #ecfdf3;
+      color: var(--success);
+      border: 1px solid #bbf7d0;
+    }
+    .cost { color: var(--warning); font-weight: 600; }
+    canvas {
+      width: 100%;
+      height: 260px;
+      display: block;
+    }
+    #status-tooltip, #aging-tooltip {
+      position: fixed;
+      background: rgba(15, 23, 42, 0.92);
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      pointer-events: none;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+      opacity: 0;
+      transition: opacity 0.1s ease;
+      z-index: 9999;
+      border: 1px solid var(--accent);
+    }
+    .chart-footer {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .chart-desc {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .heat-cell {
+      position: relative;
+      border-radius: 10px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      background: #f8fafc;
+      transition: transform 0.08s ease, box-shadow 0.15s ease;
+    }
+    .heat-cell:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
+    }
+    .heat-label { font-size: 12px; color: var(--muted); }
+    .heat-value { font-size: 22px; font-weight: 700; color: var(--text); }
+    .heat-sub { font-size: 12px; color: var(--muted); }
+    .table-wrapper {
+      height: auto;
+      overflow: visible;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+      margin-bottom: 10px;
+      padding-bottom: 12px;
+    }
+    .table-chunk {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 12px 28px 12px;
+      margin-bottom: 24px;
+      page-break-inside: avoid;
+      background: #fff;
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+    }
+    @media print {
+      @page { size: A4 landscape; margin: 10mm; }
+      body {
+        box-shadow: none;
+        max-width: 297mm;
+        padding: 10mm;
+      }
+      .btn { display: none; }
+      .panel {
+        box-shadow: none;
+        page-break-inside: avoid;
+      }
+      .table-wrapper {
+        height: 320px !important;
+        max-height: 320px !important;
+        overflow: hidden;
+      }
+      table, tr, td, th {
+        page-break-inside: avoid;
+      }
+      .header { page-break-inside: avoid; }
+      .table-chunk { page-break-inside: avoid; }
+      .table-chunk[data-chunk-index="0"] { page-break-after: always; }
+      .table-chunk[data-chunk-index]:not([data-chunk-index="0"]):nth-of-type(2n) { page-break-after: always; }
+    }
+    .download-icon {
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: transparent;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 0;
+      color: #2563eb;
+      box-shadow: none;
+      outline: none;
+      appearance: none;
+    }
+    .download-icon:hover { transform: translateY(-1px); }
+    .download-icon svg { width: 24px; height: 24px; fill: currentColor; display: block; }
+    .chart-actions {
+      display: flex;
+      justify-content: flex-start;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .chart-scroll { overflow: hidden; max-width: 100%; }
+    .chart-scroll canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; width:100%;">
+      <div class="badge project-title" id="project-badge">Proyecto: --</div>
+    </div>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-top:6px; width:100%;">
+      <div class="badge" id="generated-at">Generado: --</div>
+      <button class="btn" id="download-pdf-btn">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a1 1 0 0 1 1 1v9.586l2.293-2.293a1 1 0 0 1 1.414 1.414l-4 4a1 1 0 0 1-1.414 0l-4-4a1 1 0 1 1 1.414-1.414L11 13.586V4a1 1 0 0 1 1-1zm-7 14a1 1 0 1 1 0-2h14a1 1 0 1 1 0 2H5z"/></svg>
+        PDF
+      </button>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; width:100%;">
+      <input class="input" id="search-input" placeholder="Buscar paquetes de trabajo..." />
+      <select class="input" id="status-filter">
+        <option value="">Todos los estados</option>
+      </select>
+      <select class="input" id="graph-select" style="min-width:220px;">
+        <option value="status">Inventario de estados</option>
+        <option value="aging">Aging Index (Indice de Envejecimiento)</option>
+        <option value="costs">Grafico de costos</option>
+        <option value="startcurve">Linea de tiempo de Paquetes de trabajo</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="panel graph-panel" id="status-panel" data-graph-panel="status">
+    <canvas id="status-chart"></canvas>
+    <div id="status-tooltip"></div>
+    <div class="chart-footer">
+      <div class="chart-desc">Inventario de estados: cuantos paquetes de trabajo hay por cada estado.</div>
+    </div>
+    <div class="chart-actions">
+      <span class="download-icon" id="download-status-png" title="Descargar PNG" role="button" tabindex="0">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path fill="currentColor" d="M2.66821 12.6663V12.5003C2.66821 12.1331 2.96598 11.8353 3.33325 11.8353C3.70052 11.8353 3.99829 12.1331 3.99829 12.5003V12.6663C3.99829 13.3772 3.9992 13.8707 4.03052 14.2542C4.0612 14.6298 4.11803 14.8413 4.19849 14.9993L4.2688 15.1263C4.44511 15.4137 4.69813 15.6481 5.00024 15.8021L5.13013 15.8577C5.2739 15.9092 5.46341 15.947 5.74536 15.97C6.12888 16.0014 6.62221 16.0013 7.33325 16.0013H12.6663C13.3771 16.0013 13.8707 16.0014 14.2542 15.97C14.6295 15.9394 14.8413 15.8825 14.9993 15.8021L15.1262 15.7308C15.4136 15.5545 15.6481 15.3014 15.802 14.9993L15.8577 14.8695C15.9091 14.7257 15.9469 14.536 15.97 14.2542C16.0013 13.8707 16.0012 13.3772 16.0012 12.6663V12.5003C16.0012 12.1332 16.2991 11.8355 16.6663 11.8353C17.0335 11.8353 17.3313 12.1331 17.3313 12.5003V12.6663C17.3313 13.3553 17.3319 13.9124 17.2952 14.3626C17.2624 14.7636 17.1974 15.1247 17.053 15.4613L16.9866 15.6038C16.7211 16.1248 16.3172 16.5605 15.8215 16.8646L15.6038 16.9866C15.227 17.1786 14.8206 17.2578 14.3625 17.2952C13.9123 17.332 13.3553 17.3314 12.6663 17.3314H7.33325C6.64416 17.3314 6.0872 17.332 5.63696 17.2952C5.23642 17.2625 4.87552 17.1982 4.53931 17.054L4.39673 16.9866C3.87561 16.7211 3.43911 16.3174 3.13501 15.8216L3.01294 15.6038C2.82097 15.2271 2.74177 14.8206 2.70435 14.3626C2.66758 13.9124 2.66821 13.3553 2.66821 12.6663ZM9.33521 3.33333C9.33521 2.96606 9.63298 2.66829 10.0002 2.66829C10.3674 2.66847 10.6653 2.96617 10.6653 3.33333V10.8939L12.8625 8.69661L12.967 8.61165C13.2252 8.44092 13.5766 8.46925 13.804 8.69661C14.0633 8.95628 14.0634 9.37744 13.804 9.63704L10.47 12.97C10.3453 13.0947 10.1765 13.1653 10.0002 13.1654C9.82388 13.1654 9.65425 13.0948 9.52954 12.97L6.19653 9.63704L6.11157 9.53255C5.94101 9.27441 5.96924 8.9239 6.19653 8.69661C6.42382 8.46932 6.77433 8.44109 7.03247 8.61165L7.13696 8.69661L9.33521 10.8949V3.33333Z"></path>
+        </svg>
+      </span>
+    </div>
+  </div>
+
+  <div class="panel graph-panel" id="aging-panel" data-graph-panel="aging">
+    <div class="badge">Aging Index (Indice de Envejecimiento)</div>
+    <div class="heatmap-grid" id="aging-heatmap"></div>
+    <div id="aging-tooltip"></div>
+    <div class="chart-footer" style="justify-content:center; margin-top:8px;">
+      <div class="chart-desc">Dias transcurridos desde la ultima actualizacion (updatedAt).</div>
+    </div>
+    <div class="chart-actions">
+      <span class="download-icon" id="download-aging-png" title="Descargar PNG" role="button" tabindex="0">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path fill="currentColor" d="M2.66821 12.6663V12.5003C2.66821 12.1331 2.96598 11.8353 3.33325 11.8353C3.70052 11.8353 3.99829 12.1331 3.99829 12.5003V12.6663C3.99829 13.3772 3.9992 13.8707 4.03052 14.2542C4.0612 14.6298 4.11803 14.8413 4.19849 14.9993L4.2688 15.1263C4.44511 15.4137 4.69813 15.6481 5.00024 15.8021L5.13013 15.8577C5.2739 15.9092 5.46341 15.947 5.74536 15.97C6.12888 16.0014 6.62221 16.0013 7.33325 16.0013H12.6663C13.3771 16.0013 13.8707 16.0014 14.2542 15.97C14.6295 15.9394 14.8413 15.8825 14.9993 15.8021L15.1262 15.7308C15.4136 15.5545 15.6481 15.3014 15.802 14.9993L15.8577 14.8695C15.9091 14.7257 15.9469 14.536 15.97 14.2542C16.0013 13.8707 16.0012 13.3772 16.0012 12.6663V12.5003C16.0012 12.1332 16.2991 11.8355 16.6663 11.8353C17.0335 11.8353 17.3313 12.1331 17.3313 12.5003V12.6663C17.3313 13.3553 17.3319 13.9124 17.2952 14.3626C17.2624 14.7636 17.1974 15.1247 17.053 15.4613L16.9866 15.6038C16.7211 16.1248 16.3172 16.5605 15.8215 16.8646L15.6038 16.9866C15.227 17.1786 14.8206 17.2578 14.3625 17.2952C13.9123 17.332 13.3553 17.3314 12.6663 17.3314H7.33325C6.64416 17.3314 6.0872 17.332 5.63696 17.2952C5.23642 17.2625 4.87552 17.1982 4.53931 17.054L4.39673 16.9866C3.87561 16.7211 3.43911 16.3174 3.13501 15.8216L3.01294 15.6038C2.82097 15.2271 2.74177 14.8206 2.70435 14.3626C2.66758 13.9124 2.66821 13.3553 2.66821 12.6663ZM9.33521 3.33333C9.33521 2.96606 9.63298 2.66829 10.0002 2.66829C10.3674 2.66847 10.6653 2.96617 10.6653 3.33333V10.8939L12.8625 8.69661L12.967 8.61165C13.2252 8.44092 13.5766 8.46925 13.804 8.69661C14.0633 8.95628 14.0634 9.37744 13.804 9.63704L10.47 12.97C10.3453 13.0947 10.1765 13.1653 10.0002 13.1654C9.82388 13.1654 9.65425 13.0948 9.52954 12.97L6.19653 9.63704L6.11157 9.53255C5.94101 9.27441 5.96924 8.9239 6.19653 8.69661C6.42382 8.46932 6.77433 8.44109 7.03247 8.61165L7.13696 8.69661L9.33521 10.8949V3.33333Z"></path>
+        </svg>
+      </span>
+    </div>
+  </div>
+
+  <div class="panel graph-panel" id="cost-panel" data-graph-panel="costs">
+    <div class="badge">Grafico de costos</div>
+    <canvas id="cost-chart"></canvas>
+    <div class="chart-footer" style="justify-content:center; margin-top:8px;">
+      <div class="chart-desc">Costo total por ID de paquete de trabajo.</div>
+    </div>
+    <div class="chart-actions">
+      <span class="download-icon" id="download-cost-png" title="Descargar PNG" role="button" tabindex="0">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path fill="currentColor" d="M2.66821 12.6663V12.5003C2.66821 12.1331 2.96598 11.8353 3.33325 11.8353C3.70052 11.8353 3.99829 12.1331 3.99829 12.5003V12.6663C3.99829 13.3772 3.9992 13.8707 4.03052 14.2542C4.0612 14.6298 4.11803 14.8413 4.19849 14.9993L4.2688 15.1263C4.44511 15.4137 4.69813 15.6481 5.00024 15.8021L5.13013 15.8577C5.2739 15.9092 5.46341 15.947 5.74536 15.97C6.12888 16.0014 6.62221 16.0013 7.33325 16.0013H12.6663C13.3771 16.0013 13.8707 16.0014 14.2542 15.97C14.6295 15.9394 14.8413 15.8825 14.9993 15.8021L15.1262 15.7308C15.4136 15.5545 15.6481 15.3014 15.802 14.9993L15.8577 14.8695C15.9091 14.7257 15.9469 14.536 15.97 14.2542C16.0013 13.8707 16.0012 13.3772 16.0012 12.6663V12.5003C16.0012 12.1332 16.2991 11.8355 16.6663 11.8353C17.0335 11.8353 17.3313 12.1331 17.3313 12.5003V12.6663C17.3313 13.3553 17.3319 13.9124 17.2952 14.3626C17.2624 14.7636 17.1974 15.1247 17.053 15.4613L16.9866 15.6038C16.7211 16.1248 16.3172 16.5605 15.8215 16.8646L15.6038 16.9866C15.227 17.1786 14.8206 17.2578 14.3625 17.2952C13.9123 17.332 13.3553 17.3314 12.6663 17.3314H7.33325C6.64416 17.3314 6.0872 17.332 5.63696 17.2952C5.23642 17.2625 4.87552 17.1982 4.53931 17.054L4.39673 16.9866C3.87561 16.7211 3.43911 16.3174 3.13501 15.8216L3.01294 15.6038C2.82097 15.2271 2.74177 14.8206 2.70435 14.3626C2.66758 13.9124 2.66821 13.3553 2.66821 12.6663ZM9.33521 3.33333C9.33521 2.96606 9.63298 2.66829 10.0002 2.66829C10.3674 2.66847 10.6653 2.96617 10.6653 3.33333V10.8939L12.8625 8.69661L12.967 8.61165C13.2252 8.44092 13.5766 8.46925 13.804 8.69661C14.0633 8.95628 14.0634 9.37744 13.804 9.63704L10.47 12.97C10.3453 13.0947 10.1765 13.1653 10.0002 13.1654C9.82388 13.1654 9.65425 13.0948 9.52954 12.97L6.19653 9.63704L6.11157 9.53255C5.94101 9.27441 5.96924 8.9239 6.19653 8.69661C6.42382 8.46932 6.77433 8.44109 7.03247 8.61165L7.13696 8.69661L9.33521 10.8949V3.33333Z"></path>
+        </svg>
+      </span>
+    </div>
+  </div>
+
+  <div class="panel graph-panel" id="startcurve-panel" data-graph-panel="startcurve">
+    <div class="badge">Linea de tiempo de Paquetes de trabajo</div>
+    <div class="chart-scroll" id="startcurve-scroll">
+      <canvas id="startcurve-chart"></canvas>
+    </div>
+    <div id="startcurve-tooltip"></div>
+    <div class="chart-footer" style="justify-content:center; margin-top:8px;">
+      <div class="chart-desc">Linea de tiempo por paquete de trabajo (creacion -> vencimiento, puntos de inicio y ultima actualizacion)</div>
+    </div>
+    <div class="chart-actions">
+      <span class="download-icon" id="download-startcurve-png" title="Descargar PNG" role="button" tabindex="0">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path fill="currentColor" d="M2.66821 12.6663V12.5003C2.66821 12.1331 2.96598 11.8353 3.33325 11.8353C3.70052 11.8353 3.99829 12.1331 3.99829 12.5003V12.6663C3.99829 13.3772 3.9992 13.8707 4.03052 14.2542C4.0612 14.6298 4.11803 14.8413 4.19849 14.9993L4.2688 15.1263C4.44511 15.4137 4.69813 15.6481 5.00024 15.8021L5.13013 15.8577C5.2739 15.9092 5.46341 15.947 5.74536 15.97C6.12888 16.0014 6.62221 16.0013 7.33325 16.0013H12.6663C13.3771 16.0013 13.8707 16.0014 14.2542 15.97C14.6295 15.9394 14.8413 15.8825 14.9993 15.8021L15.1262 15.7308C15.4136 15.5545 15.6481 15.3014 15.802 14.9993L15.8577 14.8695C15.9091 14.7257 15.9469 14.536 15.97 14.2542C16.0013 13.8707 16.0012 13.3772 16.0012 12.6663V12.5003C16.0012 12.1332 16.2991 11.8355 16.6663 11.8353C17.0335 11.8353 17.3313 12.1331 17.3313 12.5003V12.6663C17.3313 13.3553 17.3319 13.9124 17.2952 14.3626C17.2624 14.7636 17.1974 15.1247 17.053 15.4613L16.9866 15.6038C16.7211 16.1248 16.3172 16.5605 15.8215 16.8646L15.6038 16.9866C15.227 17.1786 14.8206 17.2578 14.3625 17.2952C13.9123 17.332 13.3553 17.3314 12.6663 17.3314H7.33325C6.64416 17.3314 6.0872 17.332 5.63696 17.2952C5.23642 17.2625 4.87552 17.1982 4.53931 17.054L4.39673 16.9866C3.87561 16.7211 3.43911 16.3174 3.13501 15.8216L3.01294 15.6038C2.82097 15.2271 2.74177 14.8206 2.70435 14.3626C2.66758 13.9124 2.66821 13.3553 2.66821 12.6663ZM9.33521 3.33333C9.33521 2.96606 9.63298 2.66829 10.0002 2.66829C10.3674 2.66847 10.6653 2.96617 10.6653 3.33333V10.8939L12.8625 8.69661L12.967 8.61165C13.2252 8.44092 13.5766 8.46925 13.804 8.69661C14.0633 8.95628 14.0634 9.37744 13.804 9.63704L10.47 12.97C10.3453 13.0947 10.1765 13.1653 10.0002 13.1654C9.82388 13.1654 9.65425 13.0948 9.52954 12.97L6.19653 9.63704L6.11157 9.53255C5.94101 9.27441 5.96924 8.9239 6.19653 8.69661C6.42382 8.46932 6.77433 8.44109 7.03247 8.61165L7.13696 8.69661L9.33521 10.8949V3.33333Z"></path>
+        </svg>
+      </span>
+    </div>
+  </div>
+
+
+  <div class="panel">
+    <div class="controls" style="margin-bottom:4px;">
+      <div class="badge" id="wp-count">0 paquetes de trabajo</div>
+    </div>
+    <div id="table-panels"></div>
+  </div>
+
+  <script>
+    (function() {
+      // Registrar plugin de zoom/pan si está disponible
+      if (window.Chart && (window.ChartZoom || window['chartjs-plugin-zoom'])) {
+        const zoomPlugin = window.ChartZoom || window['chartjs-plugin-zoom'];
+        if (zoomPlugin && window.Chart.register) {
+          window.Chart.register(zoomPlugin);
+        }
+      }
+
+      // La IA debe reemplazar __DATA_JSON__ con JSON valido.
+      const raw = `__DATA_JSON__`;
+      const fallback = {
+        project_name: "Demo Project",
+        project_id: "PRJ-001",
+        generated_at: new Date().toISOString(),
+        items: Array.from({ length: 8 }).map((_, i) => ({
+          id: 1000 + i,
+          subject: "WP " + (i + 1),
+          _links: { status: { title: i % 2 === 0 ? "Abierto" : "En progreso" } },
+          overallCosts: "$" + (i + 1) * 1200,
+          createdAt: "2025-01-0" + ((i % 5) + 1) + "T08:00:00Z",
+          startDate: "2025-01-0" + ((i % 5) + 1),
+          dueDate: "2025-02-1" + ((i % 5) + 1),
+          updatedAt: "2025-02-2" + ((i % 5) + 1) + "T12:00:00Z"
+        }))
+      };
+
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch (e) {
+        data = fallback;
+      }
+
+      const fmtDate = (d) => d ? new Date(d).toISOString().slice(0, 10) : "--";
+      const getStatus = (item) => {
+        const linkStatus = item && item._links && item._links.status && item._links.status.title;
+        return linkStatus || item.status || "--";
+      };
+
+      const statusFilter = document.getElementById('status-filter');
+      const searchInput = document.getElementById('search-input');
+      const wpCount = document.getElementById('wp-count');
+      const projectBadge = document.getElementById('project-badge');
+      const generatedAt = document.getElementById('generated-at');
+      const tablePanels = document.getElementById('table-panels');
+      const statusChart = document.getElementById('status-chart');
+      const statusTooltip = document.getElementById('status-tooltip');
+      const agingHeatmap = document.getElementById('aging-heatmap');
+      const agingTooltip = document.getElementById('aging-tooltip');
+      const costChart = document.getElementById('cost-chart');
+      const startcurveChart = document.getElementById('startcurve-chart');
+      const startcurveTooltip = document.getElementById('startcurve-tooltip');
+      const graphSelect = document.getElementById('graph-select');
+      const statusPanel = document.getElementById('status-panel');
+      const agingPanel = document.getElementById('aging-panel');
+      const costPanel = document.getElementById('cost-panel');
+      const startcurvePanel = document.getElementById('startcurve-panel');
+      const downloadStatusIcon = document.getElementById('download-status-png');
+      const downloadAgingIcon = document.getElementById('download-aging-png');
+      const downloadCostIcon = document.getElementById('download-cost-png');
+      const downloadStartcurveIcon = document.getElementById('download-startcurve-png');
+      let costChartInstance = null;
+      let startCurveChartInstance = null;
+      let agingSnapshot = null;
+
+      projectBadge.textContent = `Proyecto: ${data.project_name || '--'}`;
+      generatedAt.textContent = `Generado: ${fmtDate(data.generated_at)}`;
+
+      const uniqueStatuses = Array.from(new Set((data.items || []).map(getStatus).filter(Boolean)));
+      uniqueStatuses.forEach(st => {
+        const opt = document.createElement('option');
+        opt.value = st;
+        opt.textContent = st;
+        statusFilter.appendChild(opt);
+      });
+
+      function filterItems() {
+        const term = (searchInput.value || '').toLowerCase();
+        const status = statusFilter.value;
+        return (data.items || []).filter(item => {
+          const name = (item.name || item.subject || '').toLowerCase();
+          const st = getStatus(item);
+          const matchesTerm = !term || name.includes(term) || String(item.id || '').includes(term) || st.toLowerCase().includes(term);
+          const matchesStatus = !status || st === status;
+          return matchesTerm && matchesStatus;
+        });
+      }
+
+      function buildTableChunk(items, startIndex, endIndex, total, chunkIndex) {
+        const chunk = document.createElement('div');
+        chunk.className = 'table-chunk';
+        chunk.setAttribute('data-chunk-index', String(chunkIndex));
+
+        const label = document.createElement('div');
+        label.className = 'badge';
+        label.textContent = `Paquetes de trabajo ${startIndex + 1} - ${endIndex} de ${total}`;
+        label.style.marginBottom = '6px';
+        chunk.appendChild(label);
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'table-wrapper';
+
+        const table = document.createElement('table');
+        table.innerHTML = `
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Estado</th>
+              <th>Nombre de la tarea</th>
+              <th>Creado</th>
+              <th>Fecha inicio</th>
+              <th>Fecha fin</th>
+              <th>Ultima actualizacion</th>
+              <th>Costo total</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        `;
+        const tbody = table.querySelector('tbody');
+        items.forEach(item => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${item.id || '--'}</td>
+            <td><span class="status">${getStatus(item)}</span></td>
+            <td>${item.name || item.subject || '--'}</td>
+            <td>${fmtDate(item.created_at || item.createdAt)}</td>
+            <td>${fmtDate(item.start_date || item.startDate)}</td>
+            <td>${fmtDate(item.due_date || item.dueDate)}</td>
+            <td>${fmtDate(item.updated_at || item.updatedAt)}</td>
+            <td class="cost">${item.overall_costs || item.overallCosts || '--'}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+        wrapper.appendChild(table);
+        chunk.appendChild(wrapper);
+        return chunk;
+      }
+
+      function renderTablePanels(items) {
+        tablePanels.innerHTML = '';
+        const chunkSize = 10;
+        const total = items.length;
+        let chunkIndex = 0;
+        for (let i = 0; i < items.length; i += chunkSize) {
+          const slice = items.slice(i, i + chunkSize);
+          const chunk = buildTableChunk(slice, i, Math.min(i + chunkSize, total), total, chunkIndex);
+          tablePanels.appendChild(chunk);
+          chunkIndex += 1;
+        }
+        wpCount.textContent = `${items.length} paquetes de trabajo`;
+      }
+
+      function drawStatusChart(items) {
+        if (!statusChart) return;
+        const ctx = statusChart.getContext('2d');
+        const counts = {};
+        items.forEach(it => {
+          const st = getStatus(it).trim() || '-';
+          counts[st] = (counts[st] || 0) + 1;
+        });
+        const labels = Object.keys(counts);
+        const values = labels.map(l => counts[l]);
+        const palette = ['#2563eb','#16a34a','#f97316','#9333ea','#0ea5e9','#f59e0b','#22c55e','#64748b'];
+
+        const width = statusChart.clientWidth || 300;
+        const height = statusChart.clientHeight || 260;
+        statusChart.width = width * window.devicePixelRatio;
+        statusChart.height = height * window.devicePixelRatio;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        ctx.clearRect(0, 0, width, height);
+
+        if (!labels.length) {
+          statusTooltip.style.opacity = 0;
+          statusChart.onmousemove = null;
+          statusChart.onmouseleave = null;
+          return;
+        }
+
+        const cx = width / 2;
+        const cy = height / 2;
+        const radius = Math.min(cx, cy) - 16;
+        const total = values.reduce((a, b) => a + b, 0) || 1;
+        const slices = [];
+        let start = -Math.PI / 2;
+
+        values.forEach((v, idx) => {
+          const angle = (v / total) * Math.PI * 2;
+          const end = start + angle;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.fillStyle = palette[idx % palette.length];
+          ctx.arc(cx, cy, radius, start, end);
+          ctx.fill();
+          slices.push({ start, end, label: labels[idx], value: v, color: palette[idx % palette.length] });
+          start = end;
+        });
+
+        ctx.fillStyle = '#0f172a';
+        ctx.font = '12px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        slices.forEach(s => {
+          const mid = (s.start + s.end) / 2;
+          const lx = cx + (radius * 0.6) * Math.cos(mid);
+          const ly = cy + (radius * 0.6) * Math.sin(mid);
+          ctx.fillText(s.value, lx, ly);
+        });
+
+        statusChart.onmousemove = (e) => {
+          const rect = statusChart.getBoundingClientRect();
+          const mx = e.clientX - rect.left;
+          const my = e.clientY - rect.top;
+          const dx = mx - cx;
+          const dy = my - cy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > radius) { statusTooltip.style.opacity = 0; return; }
+          let angle = Math.atan2(dy, dx);
+          if (angle < -Math.PI / 2) angle += Math.PI * 2;
+          const hit = slices.find(s => angle >= s.start && angle <= s.end);
+          if (hit) {
+            statusTooltip.style.opacity = 1;
+            statusTooltip.textContent = `${hit.label}: ${hit.value}`;
+            statusTooltip.style.left = `${e.clientX + 10}px`;
+            statusTooltip.style.top = `${e.clientY - 10}px`;
+          } else {
+            statusTooltip.style.opacity = 0;
+          }
+        };
+        statusChart.onmouseleave = () => { statusTooltip.style.opacity = 0; };
+      }
+
+      function renderAgingHeatmap(items) {
+        if (!agingHeatmap) return;
+        const now = Date.now();
+        const buckets = [
+          { label: '0-3 dias', min: 0, max: 3 },
+          { label: '4-7 dias', min: 4, max: 7 },
+          { label: '8-14 dias', min: 8, max: 14 },
+          { label: '15-30 dias', min: 15, max: 30 },
+          { label: '31+ dias', min: 31, max: Infinity }
+        ];
+        const counts = buckets.map(() => 0);
+        (items || []).forEach(item => {
+          const d = item.updated_at || item.updatedAt;
+          if (!d) return;
+          const ts = Date.parse(d);
+          if (Number.isNaN(ts)) return;
+          const days = Math.max(0, Math.floor((now - ts) / 86400000));
+          const idx = buckets.findIndex(b => days >= b.min && days <= b.max);
+          if (idx >= 0) counts[idx] += 1;
+        });
+        const max = counts.reduce((a, b) => Math.max(a, b), 0) || 1;
+        agingHeatmap.innerHTML = '';
+        buckets.forEach((b, i) => {
+          const count = counts[i];
+          const intensity = count / max;
+          const color = `rgba(29,78,216, ${0.15 + intensity * 0.65})`;
+          const cell = document.createElement('div');
+          cell.className = 'heat-cell';
+          cell.style.background = `linear-gradient(135deg, ${color} 0%, #ffffff 80%)`;
+          cell.innerHTML = `
+            <div class="heat-label">${b.label}</div>
+            <div class="heat-value">${count}</div>
+            <div class="heat-sub">Paquetes de trabajo</div>
+          `;
+          cell.addEventListener('mousemove', (e) => {
+            agingTooltip.style.opacity = 1;
+            agingTooltip.textContent = `${b.label}: ${count} Paquetes de trabajo`;
+            agingTooltip.style.left = `${e.clientX + 10}px`;
+            agingTooltip.style.top = `${e.clientY - 10}px`;
+          });
+          cell.addEventListener('mouseleave', () => { agingTooltip.style.opacity = 0; });
+          agingHeatmap.appendChild(cell);
+        });
+        agingSnapshot = { buckets, counts, max };
+
+        if (counts.every(c => c === 0)) {
+          agingHeatmap.innerHTML = '<div class="heat-label">Sin datos de updatedAt para calcular el indice.</div>';
+        }
+      }
+
+      function drawCostChart(items) {
+        if (!costChart) return;
+        const ctx = costChart.getContext('2d');
+        const rows = (items || []).map(it => {
+          const raw = it.overall_costs || it.overallCosts || 0;
+          const num = typeof raw === 'number' ? raw : Number(String(raw).replace(/[^0-9.-]/g, ''));
+          const val = Number.isFinite(num) ? num : 0;
+          return { id: it.id, value: val };
+        }).filter(r => r.id !== undefined && r.id !== null);
+
+        const labels = rows.map(r => String(r.id));
+        const dataVals = rows.map(r => r.value);
+
+        if (costChartInstance) costChartInstance.destroy();
+        costChartInstance = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Costo total',
+              data: dataVals,
+              backgroundColor: 'rgba(37, 99, 235, 0.65)',
+              borderColor: '#2563eb',
+              borderWidth: 1,
+              categoryPercentage: 0.6,
+              barPercentage: 0.5
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: {
+                display: true,
+                position: 'bottom',
+                align: 'center',
+                labels: { boxWidth: 12, boxHeight: 12 }
+              },
+              tooltip: { enabled: true }
+            },
+            scales: {
+              x: {
+                title: { display: true, text: 'ID de tarea' }
+              },
+              y: {
+                title: { display: true, text: 'Costo total' },
+                beginAtZero: true
+              }
+            }
+          }
+        });
+      }
+
+      function drawStartCurve(items) {
+        if (!startcurveChart) return;
+        const tasks = (items || []).map(it => ({
+          id: it.id,
+          subject: it.subject || it.name || `Tarea ${it.id || ''}`,
+          created: it.created_at || it.createdAt,
+          start: it.start_date || it.startDate,
+          due: it.due_date || it.dueDate,
+          updated: it.updated_at || it.updatedAt
+        })).filter(t => t.id !== undefined && t.id !== null && t.id !== '');
+
+        const toDayStr = (d) => {
+          const ts = Date.parse(d);
+          if (Number.isNaN(ts)) return null;
+          return new Date(ts).toISOString().slice(0, 10);
+        };
+
+        const dateSet = new Set();
+
+        const bars = tasks
+          .map(t => {
+            const startDay = toDayStr(t.created);
+            const endDay = toDayStr(t.due) ?? startDay;
+            if (startDay === null || endDay === null) return null;
+            dateSet.add(startDay);
+            dateSet.add(endDay);
+            return {
+              y: String(t.id),
+              startDay,
+              endDay,
+              subject: t.subject
+            };
+          })
+          .filter(Boolean);
+
+        const startPoints = tasks
+          .map(t => {
+            const d = toDayStr(t.start);
+            if (d === null) return null;
+            dateSet.add(d);
+            return { x: d, y: String(t.id), subject: t.subject };
+          })
+          .filter(Boolean);
+
+        const createdPoints = tasks
+          .map(t => {
+            const d = toDayStr(t.created);
+            if (d === null) return null;
+            dateSet.add(d);
+            return { x: d, y: String(t.id), subject: t.subject };
+          })
+          .filter(Boolean);
+
+        const duePoints = tasks
+          .map(t => {
+            const d = toDayStr(t.due);
+            if (d === null) return null;
+            dateSet.add(d);
+            return { x: d, y: String(t.id), subject: t.subject };
+          })
+          .filter(Boolean);
+
+        const updatedPoints = tasks
+          .map(t => {
+            const d = toDayStr(t.updated);
+            if (d === null) return null;
+            dateSet.add(d);
+            return { x: d, y: String(t.id), subject: t.subject };
+          })
+          .filter(Boolean);
+
+        const dateLabels = Array.from(dateSet).sort();
+
+        if (!bars.length || !dateLabels.length) {
+          if (startCurveChartInstance) startCurveChartInstance.destroy();
+          startCurveChartInstance = null;
+          startcurveTooltip.style.opacity = 0;
+          return;
+        }
+
+        const yLabels = Array.from(new Set([
+          ...bars.map(b => b.y),
+          ...startPoints.map(p => p.y),
+          ...updatedPoints.map(p => p.y)
+        ])).sort((a, b) => Number(a) - Number(b)).reverse();
+
+        const barRects = bars.map(b => ({
+          y: b.y,
+          start: b.startDay,
+          end: b.endDay,
+          subject: b.subject
+        }));
+
+        const pointWithIndex = (arr) => arr.map(p => ({
+          y: p.y,
+          x: p.x,
+          subject: p.subject
+        }));
+
+        const startData = pointWithIndex(startPoints);
+        const createdData = pointWithIndex(createdPoints);
+        const dueData = pointWithIndex(duePoints);
+        const updatedData = pointWithIndex(updatedPoints);
+
+        const barPlugin = {
+          id: 'startRangeBars',
+          beforeDatasetsDraw(chart, args, pluginOptions) {
+            const bars = pluginOptions?.bars || [];
+            const { ctx, scales } = chart;
+            const xScale = scales.x;
+            const yScale = scales.y;
+            if (!xScale || !yScale) return;
+            const yStep = Math.abs((yScale.getPixelForValue(yLabels[1] || yLabels[0]) || 0) - (yScale.getPixelForValue(yLabels[0]) || 0));
+            const baseHeight = Math.max(12, yStep - 6);
+            const height = Math.max(4, baseHeight * 0.375); // 50% más delgada y 25% menos (0.75) adicional
+            ctx.save();
+            bars.forEach(b => {
+              const yPix = yScale.getPixelForValue(b.y);
+              const startPix = xScale.getPixelForValue(b.start);
+              const endPix = xScale.getPixelForValue(b.end);
+              if (!Number.isFinite(yPix) || !Number.isFinite(startPix) || !Number.isFinite(endPix)) return;
+              const left = Math.min(startPix, endPix);
+              const width = Math.abs(endPix - startPix) || 2;
+              const top = yPix - height / 2;
+              ctx.fillStyle = 'rgba(37, 99, 235, 0.14)';
+              ctx.strokeStyle = '#2563eb';
+              ctx.lineWidth = 1;
+              ctx.beginPath();
+              ctx.rect(left, top, width, height);
+              ctx.fill();
+              ctx.stroke();
+            });
+            ctx.restore();
+          }
+        };
+
+        if (startCurveChartInstance) startCurveChartInstance.destroy();
+        startCurveChartInstance = new Chart(startcurveChart.getContext('2d'), {
+          type: 'scatter',
+          data: {
+            datasets: [
+              {
+                type: 'scatter',
+                label: 'Creacion',
+                data: createdData,
+                pointBackgroundColor: '#f97316',
+                pointBorderColor: '#f97316',
+                pointRadius: 6,
+                pointHoverRadius: 7,
+                order: 1,
+                showLine: false,
+                parsing: { xAxisKey: 'x', yAxisKey: 'y' }
+              },
+              {
+                type: 'scatter',
+                label: 'Inicio (startDate)',
+                data: startData,
+                pointBackgroundColor: '#ef4444',
+                pointBorderColor: '#ef4444',
+                pointRadius: 6,
+                pointHoverRadius: 7,
+                order: 1,
+                showLine: false,
+                parsing: { xAxisKey: 'x', yAxisKey: 'y' }
+              },
+              {
+                type: 'scatter',
+                label: 'Vencimiento',
+                data: dueData,
+                pointBackgroundColor: '#facc15',
+                pointBorderColor: '#facc15',
+                pointRadius: 5,
+                order: 1,
+                showLine: false,
+                parsing: { xAxisKey: 'x', yAxisKey: 'y' }
+              },
+              {
+                type: 'scatter',
+                label: 'Ultima actualizacion',
+                data: updatedData,
+                pointBackgroundColor: '#10b981',
+                pointBorderColor: '#10b981',
+                pointRadius: 5,
+                order: 1,
+                showLine: false,
+                parsing: { xAxisKey: 'x', yAxisKey: 'y' }
+              }
+            ]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            interaction: { mode: 'nearest', intersect: true },
+            plugins: {
+              legend: {
+                display: true,
+                position: 'bottom',
+                align: 'center',
+                labels: { boxWidth: 12, boxHeight: 12 }
+              },
+              tooltip: {
+                enabled: true,
+                callbacks: {
+                  label: (ctx) => {
+                    const raw = ctx.raw;
+                    const xLabel = raw.x || '';
+                    return `${ctx.dataset.label}: ${raw.subject} (ID: ${raw.y}) | ${xLabel}`;
+                  }
+                }
+              },
+              startRangeBars: { bars: barRects },
+              zoom: {
+                pan: {
+                  enabled: true,
+                  mode: 'xy',
+                  modifierKey: null
+                },
+                zoom: {
+                  wheel: { enabled: false },
+                  pinch: { enabled: false },
+                  drag: { enabled: false }
+                }
+              }
+            },
+            layout: { padding: { top: 8 } },
+            scales: {
+              x: {
+                type: 'category',
+                labels: dateLabels,
+                title: { display: false, text: '' },
+                ticks: { maxRotation: 45, minRotation: 45 }
+              },
+              y: {
+                type: 'category',
+                labels: yLabels,
+                title: { display: true, text: 'ID de tarea' }
+              }
+            }
+          },
+          plugins: [barPlugin]
+        });
+
+      }
+
+      function refresh() {
+        const items = filterItems();
+        renderTablePanels(items);
+        drawStatusChart(items);
+        renderAgingHeatmap(items);
+        drawCostChart(items);
+        drawStartCurve(items);
+      }
+
+      searchInput.addEventListener('input', refresh);
+      statusFilter.addEventListener('change', refresh);
+
+      document.getElementById('download-pdf-btn').addEventListener('click', () => {
+        window.print();
+      });
+
+      function syncGraphPanels() {
+        const g = graphSelect ? graphSelect.value : 'status';
+        if (statusPanel) statusPanel.style.display = g === 'status' ? '' : 'none';
+        if (agingPanel) agingPanel.style.display = g === 'aging' ? '' : 'none';
+        if (costPanel) costPanel.style.display = g === 'costs' ? '' : 'none';
+        if (startcurvePanel) startcurvePanel.style.display = g === 'startcurve' ? '' : 'none';
+      }
+
+      graphSelect.addEventListener('change', () => {
+        syncGraphPanels();
+        // Redibujar por si cambian tamanos al ocultar/mostrar
+        const items = filterItems();
+        drawStatusChart(items);
+        renderAgingHeatmap(items);
+        drawCostChart(items);
+        drawFlowChart(items);
+        drawBurndownChart(items);
+      });
+
+      syncGraphPanels();
+      function downloadStatusChart() {
+        if (!statusChart) return;
+        const url = statusChart.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `inventario_estados_${Date.now()}.png`;
+        a.click();
+      }
+
+      function downloadAgingChart() {
+        if (!agingSnapshot) return;
+        const { buckets, counts, max } = agingSnapshot;
+
+        // Canvas dimension y estilo similar al grid
+        const width = 720;
+        const rowH = 70;
+        const padding = 20;
+        const radius = 10;
+        const height = padding * 2 + buckets.length * rowH;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width * window.devicePixelRatio;
+        canvas.height = height * window.devicePixelRatio;
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+        // Fondo
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.font = '12px Inter, sans-serif';
+        ctx.textBaseline = 'middle';
+
+        const drawRoundedRect = (x, y, w, h, r) => {
+          ctx.beginPath();
+          ctx.moveTo(x + r, y);
+          ctx.lineTo(x + w - r, y);
+          ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+          ctx.lineTo(x + w, y + h - r);
+          ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+          ctx.lineTo(x + r, y + h);
+          ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+          ctx.lineTo(x, y + r);
+          ctx.quadraticCurveTo(x, y, x + r, y);
+          ctx.closePath();
+        };
+
+        buckets.forEach((b, i) => {
+          const count = counts[i];
+          const intensity = max ? count / max : 0;
+          const color = `rgba(29,78,216, ${0.15 + intensity * 0.65})`;
+          const y = padding + i * rowH;
+          const boxHeight = rowH - 10;
+
+          // Fondo degradado similar a las celdas de la UI
+          const gradient = ctx.createLinearGradient(padding, y, width - padding, y + boxHeight);
+          gradient.addColorStop(0, color);
+          gradient.addColorStop(1, '#ffffff');
+
+          drawRoundedRect(padding, y, width - padding * 2, boxHeight, radius);
+          ctx.fillStyle = gradient;
+          ctx.fill();
+          ctx.strokeStyle = '#dbeafe';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          // Texto principal
+          ctx.fillStyle = '#0f172a';
+          ctx.font = '13px Inter, sans-serif';
+          ctx.fillText(`${b.label}: ${count} paquetes de trabajo`, padding + 12, y + boxHeight / 2);
+        });
+
+        const url = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `aging_index_${Date.now()}.png`;
+        a.click();
+      }
+
+      if (downloadStatusIcon) downloadStatusIcon.addEventListener('click', downloadStatusChart);
+      if (downloadAgingIcon) downloadAgingIcon.addEventListener('click', downloadAgingChart);
+      function downloadCostChart() {
+        if (!costChart) return;
+        const url = costChart.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `costos_${Date.now()}.png`;
+        a.click();
+      }
+      if (downloadCostIcon) downloadCostIcon.addEventListener('click', downloadCostChart);
+      if (downloadStartcurveIcon) downloadStartcurveIcon.addEventListener('click', () => {
+        if (!startcurveChart) return;
+        const url = startcurveChart.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `curva_inicio_${Date.now()}.png`;
+        a.click();
+      });
+
+      refresh();
+    })();
+  </script>
+</body>
+</html>
