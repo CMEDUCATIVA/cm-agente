@@ -75,6 +75,7 @@ class Settings(BaseSettings):
 
     HOST: str = "0.0.0.0"
     PORT: int = 8080
+    PUBLIC_BASE_URL: str | None = None
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 30
     LOG_LEVEL: LogLevel = LogLevel.WARNING
 
@@ -265,6 +266,8 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def BASE_URL(self) -> str:
+        if self.PUBLIC_BASE_URL:
+            return self.PUBLIC_BASE_URL.rstrip("/")
         return f"http://{self.HOST}:{self.PORT}"
 
     def is_dev(self) -> bool:
