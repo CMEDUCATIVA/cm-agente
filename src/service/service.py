@@ -1,6 +1,7 @@
 import inspect
 import json
 import logging
+import secrets
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -10,7 +11,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.routing import APIRoute
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from langchain_core._api import LangChainBetaWarning
 from langchain_core.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -63,6 +64,30 @@ def verify_bearer(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
 
+def verify_basic(
+    basic_auth: Annotated[
+        HTTPBasicCredentials | None,
+        Depends(HTTPBasic(description="Basic auth required.", auto_error=False)),
+    ],
+) -> None:
+    if not settings.BASIC_AUTH_USERNAME or not settings.BASIC_AUTH_PASSWORD:
+        return
+    username = settings.BASIC_AUTH_USERNAME
+    password = settings.BASIC_AUTH_PASSWORD.get_secret_value()
+    if not basic_auth:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    valid_user = secrets.compare_digest(basic_auth.username or "", username)
+    valid_pass = secrets.compare_digest(basic_auth.password or "", password)
+    if not (valid_user and valid_pass):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
@@ -101,7 +126,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(lifespan=lifespan, generate_unique_id_function=custom_generate_unique_id)
-router = APIRouter(dependencies=[Depends(verify_bearer)])
+router = APIRouter(dependencies=[Depends(verify_bearer), Depends(verify_basic)])
 
 
 @router.get("/info")
