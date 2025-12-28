@@ -1470,12 +1470,20 @@ async def openproject_list_work_packages(
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "items": items_sorted,
     }
+    next_offset = None
+    if isinstance(total, int) and isinstance(work_packages_offset, int):
+        current_end = work_packages_offset - 1 + len(items_sorted)
+        if current_end < total:
+            next_offset = current_end + 1
+
     work_packages = {
         "_type": result.get("_type", "Collection"),
         "total": total,
         "count": len(items_sorted),
         "pageSize": max_items,
         "offset": work_packages_offset,
+        "truncated": isinstance(total, int) and total > (work_packages_offset - 1 + len(items_sorted)),
+        "next_offset": next_offset,
         "items": items_sorted,
     }
     return {
