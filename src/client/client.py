@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 from collections.abc import AsyncGenerator, Generator
@@ -42,6 +43,8 @@ class AgentClient:
         """
         self.base_url = base_url
         self.auth_secret = os.getenv("AUTH_SECRET")
+        self.basic_auth_username = os.getenv("BASIC_AUTH_USERNAME")
+        self.basic_auth_password = os.getenv("BASIC_AUTH_PASSWORD")
         self.timeout = timeout
         self.info: ServiceMetadata | None = None
         self.agent: str | None = None
@@ -55,6 +58,9 @@ class AgentClient:
         headers = {}
         if self.auth_secret:
             headers["Authorization"] = f"Bearer {self.auth_secret}"
+        elif self.basic_auth_username and self.basic_auth_password:
+            token = f"{self.basic_auth_username}:{self.basic_auth_password}".encode("utf-8")
+            headers["Authorization"] = f"Basic {base64.b64encode(token).decode('ascii')}"
         return headers
 
     def retrieve_info(self) -> None:
