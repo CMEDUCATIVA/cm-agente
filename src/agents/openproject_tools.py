@@ -1357,9 +1357,7 @@ async def openproject_list_work_packages(
     memberships_offset: int = 1,
 ) -> dict[str, Any]:
     """
-    List work packages and generate an HTML report download link.
-
-    Returns only the download link metadata to avoid flooding chat output.
+    List work packages and return analysis + JSON payload ready to render.
     """
     max_items = max(1, min(int(max_items), 200))
     work_packages_offset = max(1, int(work_packages_offset))
@@ -1381,29 +1379,112 @@ async def openproject_list_work_packages(
     elements = embedded.get("elements") if isinstance(embedded.get("elements"), list) else []
     items = [e for e in elements if isinstance(e, dict)]
 
+    total = result.get("total", len(items))
     project_name = NO_DATA_TEXT
     project_result = await _post_tool("/tools/get_project", params={"project_id": project_id})
     if isinstance(project_result, dict) and not project_result.get("_error"):
         project_name = project_result.get("name") or project_name
+    project_payload = _extract_project_fields(project_result) if isinstance(project_result, dict) else {
+        "id": project_id,
+        "name": project_name,
+    }
 
-    try:
-        html = _build_work_packages_report_html(
-            project_id=project_id,
-            project_name=str(project_name),
-            items=items,
-        )
-        report_id = write_html_report(html)
-        download_url = f"{settings.BASE_URL}/download/{report_id}"
-        return {
-            "download_url": download_url,
-            "rendered": f"{download_url}",
-        }
-    except Exception as exc:
-        return {
-            "_error": "openproject_report_generation_failed",
-            "detail": str(exc),
-            "rendered": "No se pudo generar el reporte HTML.",
-        }
+    items_sorted = sorted(items, key=lambda it: (it.get("id") is None, it.get("id")))
+
+    def parse_iso(value: Any) -> datetime | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    def top_pairs(counter: dict[str, int], limit: int = 3) -> list[str]:
+        return [f"{k} ({v})" for k, v in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]
+
+    status_counts: dict[str, int] = {}
+    type_counts: dict[str, int] = {}
+    priority_counts: dict[str, int] = {}
+    assignee_counts: dict[str, int] = {}
+    responsible_counts: dict[str, int] = {}
+    pct_values: list[float] = []
+    overdue_count = 0
+    due_with_date = 0
+    now = datetime.utcnow()
+
+    for it in items_sorted:
+        links = it.get("_links") if isinstance(it.get("_links"), dict) else {}
+        status_title = (links.get("status") or {}).get("title")
+        type_title = (links.get("type") or {}).get("title")
+        priority_title = (links.get("priority") or {}).get("title")
+        assignee_title = (links.get("assignee") or {}).get("title")
+        responsible_title = (links.get("responsible") or {}).get("title")
+        if status_title:
+            status_counts[status_title] = status_counts.get(status_title, 0) + 1
+        if type_title:
+            type_counts[type_title] = type_counts.get(type_title, 0) + 1
+        if priority_title:
+            priority_counts[priority_title] = priority_counts.get(priority_title, 0) + 1
+        if assignee_title:
+            assignee_counts[assignee_title] = assignee_counts.get(assignee_title, 0) + 1
+        if responsible_title:
+            responsible_counts[responsible_title] = responsible_counts.get(responsible_title, 0) + 1
+        pct_raw = it.get("derivedPercentageDone", it.get("percentageDone"))
+        try:
+            pct_value = float(pct_raw)
+        except (TypeError, ValueError):
+            pct_value = 0.0
+        pct_values.append(pct_value)
+        due_value = it.get("dueDate") or it.get("due_date")
+        due_dt = parse_iso(due_value)
+        if due_dt:
+            due_with_date += 1
+            if due_dt.date() < now.date() and pct_value < 100:
+                overdue_count += 1
+
+    avg_pct = sum(pct_values) / len(pct_values) if pct_values else 0.0
+    overdue_pct = (overdue_count / due_with_date * 100) if due_with_date else 0.0
+
+    analysis_lines = [
+        f"Resumen BIM del proyecto {project_name} (ID {project_id}).",
+        f"- Paquetes analizados: {len(items_sorted)} de {total} (filtro estado={status}).",
+        f"- Avance promedio: {avg_pct:.1f}%.",
+    ]
+    if status_counts:
+        analysis_lines.append(f"- Estados principales: {', '.join(top_pairs(status_counts))}.")
+    if type_counts:
+        analysis_lines.append(f"- Tipos principales: {', '.join(top_pairs(type_counts))}.")
+    if priority_counts:
+        analysis_lines.append(f"- Prioridades: {', '.join(top_pairs(priority_counts))}.")
+    if assignee_counts:
+        analysis_lines.append(f"- Asignados principales: {', '.join(top_pairs(assignee_counts))}.")
+    if responsible_counts:
+        analysis_lines.append(f"- Responsables principales: {', '.join(top_pairs(responsible_counts))}.")
+    if due_with_date:
+        analysis_lines.append(f"- Vencidos: {overdue_count} ({overdue_pct:.1f}%) sobre {due_with_date} con fecha.")
+
+    analysis = "\n".join(analysis_lines)
+    report_data = {
+        "project_name": str(project_name),
+        "project_id": project_id,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "items": items_sorted,
+    }
+    work_packages = {
+        "_type": result.get("_type", "Collection"),
+        "total": total,
+        "count": len(items_sorted),
+        "pageSize": max_items,
+        "offset": work_packages_offset,
+        "items": items_sorted,
+    }
+    return {
+        "project": project_payload,
+        "work_packages": work_packages,
+        "analysis": analysis,
+        "report_data": report_data,
+        "rendered": analysis,
+    }
 
 @tool("OpenProject_GetWorkPackage")
 async def openproject_get_work_package(work_package_id: int) -> dict[str, Any]:
