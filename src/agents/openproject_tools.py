@@ -1464,12 +1464,6 @@ async def openproject_list_work_packages(
         analysis_lines.append(f"- Vencidos: {overdue_count} ({overdue_pct:.1f}%) sobre {due_with_date} con fecha.")
 
     analysis = "\n".join(analysis_lines)
-    report_data = {
-        "project_name": str(project_name),
-        "project_id": project_id,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
-        "items": items_sorted,
-    }
     next_offset = None
     if isinstance(total, int) and isinstance(work_packages_offset, int):
         current_end = work_packages_offset - 1 + len(items_sorted)
@@ -1484,13 +1478,11 @@ async def openproject_list_work_packages(
         "offset": work_packages_offset,
         "truncated": isinstance(total, int) and total > (work_packages_offset - 1 + len(items_sorted)),
         "next_offset": next_offset,
-        "items": items_sorted,
     }
     return {
         "project": project_payload,
         "work_packages": work_packages,
         "analysis": analysis,
-        "report_data": report_data,
         "rendered": analysis,
     }
 
