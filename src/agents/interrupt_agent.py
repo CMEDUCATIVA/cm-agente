@@ -16,6 +16,7 @@ from core import get_model, settings
 
 # Added logger
 logger = logging.getLogger(__name__)
+MAX_HISTORY_MESSAGES = 10
 
 
 class AgentState(MessagesState, total=False):
@@ -31,7 +32,7 @@ def wrap_model(
     model: BaseChatModel | Runnable[LanguageModelInput, Any], system_prompt: BaseMessage
 ) -> RunnableSerializable[AgentState, Any]:
     preprocessor = RunnableLambda(
-        lambda state: [system_prompt] + state["messages"],
+        lambda state: [system_prompt] + state["messages"][-MAX_HISTORY_MESSAGES:],
         name="StateModifier",
     )
     return preprocessor | model
