@@ -10,6 +10,9 @@ from agents.bg_task_agent.task import Task
 from core import get_model, settings
 
 
+MAX_HISTORY_MESSAGES = 10
+
+
 class AgentState(MessagesState, total=False):
     """`total=False` is PEP589 specs.
 
@@ -19,7 +22,7 @@ class AgentState(MessagesState, total=False):
 
 def wrap_model(model: BaseChatModel) -> RunnableSerializable[AgentState, AIMessage]:
     preprocessor = RunnableLambda(
-        lambda state: state["messages"],
+        lambda state: state["messages"][-MAX_HISTORY_MESSAGES:],
         name="StateModifier",
     )
     return preprocessor | model  # type: ignore[return-value]
