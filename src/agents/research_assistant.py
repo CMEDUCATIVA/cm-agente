@@ -37,6 +37,7 @@ if settings.OPENWEATHERMAP_API_KEY:
     tools.append(OpenWeatherMapQueryRun(name="Weather", api_wrapper=wrapper))
 
 current_date = datetime.now().strftime("%B %d, %Y")
+MAX_HISTORY_MESSAGES = 10
 instructions = f"""
     You are a helpful research assistant with the ability to search the web and use other tools.
     Today's date is {current_date}.
@@ -54,7 +55,7 @@ instructions = f"""
 def wrap_model(model: BaseChatModel) -> RunnableSerializable[AgentState, AIMessage]:
     bound_model = model.bind_tools(tools)
     preprocessor = RunnableLambda(
-        lambda state: [SystemMessage(content=instructions)] + state["messages"],
+        lambda state: [SystemMessage(content=instructions)] + state["messages"][-MAX_HISTORY_MESSAGES:],
         name="StateModifier",
     )
     return preprocessor | bound_model  # type: ignore[return-value]
