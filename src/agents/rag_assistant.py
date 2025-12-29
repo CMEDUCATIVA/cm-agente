@@ -31,6 +31,7 @@ tools = [database_search]
 
 
 current_date = datetime.now().strftime("%B %d, %Y")
+MAX_HISTORY_MESSAGES = 10
 instructions = f"""
     You are AcmeBot, a helpful and knowledgeable virtual assistant designed to support employees by retrieving
     and answering questions based on AcmeTech's official Employee Handbook. Your primary role is to provide
@@ -50,7 +51,7 @@ instructions = f"""
 def wrap_model(model: BaseChatModel) -> RunnableSerializable[AgentState, AIMessage]:
     bound_model = model.bind_tools(tools)
     preprocessor = RunnableLambda(
-        lambda state: [SystemMessage(content=instructions)] + state["messages"],
+        lambda state: [SystemMessage(content=instructions)] + state["messages"][-MAX_HISTORY_MESSAGES:],
         name="StateModifier",
     )
     return preprocessor | bound_model  # type: ignore[return-value]
