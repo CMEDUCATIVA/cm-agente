@@ -1355,6 +1355,7 @@ async def openproject_list_work_packages(
     work_packages_offset: int = 1,
     max_memberships: int = 50,
     memberships_offset: int = 1,
+    user_question: str | None = None,
 ) -> dict[str, Any]:
     """
     List work packages and return analysis + JSON payload ready to render.
@@ -1464,6 +1465,14 @@ async def openproject_list_work_packages(
         analysis_lines.append(f"- Vencidos: {overdue_count} ({overdue_pct:.1f}%) sobre {due_with_date} con fecha.")
 
     analysis = "\n".join(analysis_lines)
+    answer = None
+    if user_question and isinstance(user_question, str):
+        question_clean = user_question.strip()
+        if question_clean:
+            answer = (
+                "Recibi tu consulta y genere el resumen con los datos reales del proyecto. "
+                "Si necesitas un foco especifico (estado, responsable, fechas), dímelo y lo preparo."
+            )
     try:
         html = _build_work_packages_report_html(
             project_id=project_id,
@@ -1498,7 +1507,12 @@ async def openproject_list_work_packages(
         "work_packages": work_packages,
         "analysis": analysis,
         "download_url": download_url,
-        "rendered": f"{analysis}\n\nDescarga el reporte completo aqui: {download_url}",
+        "answer": answer,
+        "rendered": (
+            f"{answer}\n\n{analysis}\n\nDescarga el reporte completo aqui: {download_url}"
+            if answer
+            else f"{analysis}\n\nDescarga el reporte completo aqui: {download_url}"
+        ),
     }
 
 @tool("OpenProject_GetWorkPackage")
