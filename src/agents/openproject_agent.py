@@ -52,20 +52,28 @@ async def acall_model(state: AgentState, config: RunnableConfig) -> AgentState:
 
 def _extract_rendered_from_tool_message(message: ToolMessage) -> str | None:
     content = message.content
-    if not isinstance(content, str) or not content.strip():
+    data: dict | None = None
+    if isinstance(content, dict):
+        data = content
+    elif isinstance(content, str) and content.strip():
+        try:
+            data = json.loads(content)
+        except Exception:
+            try:
+                data = ast.literal_eval(content)
+            except Exception:
+                return None
+    else:
         return None
 
-    data = None
-    try:
-        data = json.loads(content)
-    except Exception:
-        try:
-            data = ast.literal_eval(content)
-        except Exception:
-            return None
-
-    if isinstance(data, dict) and isinstance(data.get("rendered"), str) and data["rendered"].strip():
-        return data["rendered"].strip()
+    if isinstance(data, dict):
+        rendered = data.get("rendered")
+        if isinstance(rendered, str) and rendered.strip():
+            return rendered.strip()
+        analysis = data.get("analysis")
+        download_url = data.get("download_url")
+        if isinstance(analysis, str) and isinstance(download_url, str):
+            return f"{analysis}\n\nDescarga el reporte completo aqui: {download_url}"
     return None
 
 
