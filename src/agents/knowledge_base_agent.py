@@ -13,6 +13,7 @@ from langgraph.managed import RemainingSteps
 from core import get_model, settings
 
 logger = logging.getLogger(__name__)
+MAX_HISTORY_MESSAGES = 10
 
 
 # Define the state
@@ -67,13 +68,13 @@ def wrap_model(model: BaseChatModel) -> RunnableSerializable[AgentState, AIMessa
         if "kb_documents" in state:
             # Append document information to the system prompt
             document_prompt = f"\n\nI've retrieved the following documents that may be relevant to the query:\n\n{state['kb_documents']}\n\nPlease use these documents to inform your response to the user's query. Only use information from these documents and clearly indicate when you are unsure."
-            return [SystemMessage(content=base_prompt + document_prompt)] + state["messages"]
+            return [SystemMessage(content=base_prompt + document_prompt)] + state["messages"][-MAX_HISTORY_MESSAGES:]
         else:
             # No documents were retrieved
             no_docs_prompt = (
                 "\n\nNo relevant documents were found in the knowledge base for this query."
             )
-            return [SystemMessage(content=base_prompt + no_docs_prompt)] + state["messages"]
+            return [SystemMessage(content=base_prompt + no_docs_prompt)] + state["messages"][-MAX_HISTORY_MESSAGES:]
 
     preprocessor = RunnableLambda(
         create_system_message,
