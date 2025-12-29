@@ -18,6 +18,7 @@ class AgentState(MessagesState, total=False):
 
 
 current_date = datetime.now().strftime("%B %d, %Y")
+MAX_HISTORY_MESSAGES = 10
 instructions = f"""
 You are an OpenProject assistant. You can read and update OpenProject data by calling tools.
 Today's date is {current_date}.
@@ -36,7 +37,7 @@ Rules:
 def wrap_model(model: BaseChatModel) -> RunnableSerializable[AgentState, AIMessage]:
     bound_model = model.bind_tools(openproject_tools)
     preprocessor = RunnableLambda(
-        lambda state: [SystemMessage(content=instructions)] + state["messages"],
+        lambda state: [SystemMessage(content=instructions)] + state["messages"][-MAX_HISTORY_MESSAGES:],
         name="StateModifier",
     )
     return preprocessor | bound_model  # type: ignore[return-value]
