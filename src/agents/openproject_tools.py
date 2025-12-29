@@ -1464,6 +1464,20 @@ async def openproject_list_work_packages(
         analysis_lines.append(f"- Vencidos: {overdue_count} ({overdue_pct:.1f}%) sobre {due_with_date} con fecha.")
 
     analysis = "\n".join(analysis_lines)
+    try:
+        html = _build_work_packages_report_html(
+            project_id=project_id,
+            project_name=str(project_name),
+            items=items_sorted,
+        )
+        report_id = write_html_report(html)
+        download_url = f"{settings.BASE_URL}/download/{report_id}"
+    except Exception as exc:
+        return {
+            "_error": "openproject_report_generation_failed",
+            "detail": str(exc),
+            "rendered": "No se pudo generar el reporte HTML.",
+        }
     next_offset = None
     if isinstance(total, int) and isinstance(work_packages_offset, int):
         current_end = work_packages_offset - 1 + len(items_sorted)
@@ -1483,7 +1497,8 @@ async def openproject_list_work_packages(
         "project": project_payload,
         "work_packages": work_packages,
         "analysis": analysis,
-        "rendered": analysis,
+        "download_url": download_url,
+        "rendered": f"{analysis}\n\nDescarga el reporte completo aqui: {download_url}",
     }
 
 @tool("OpenProject_GetWorkPackage")
