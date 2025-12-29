@@ -1353,12 +1353,52 @@ async def openproject_list_work_packages(
     status: str = "open",
     max_items: int = 50,
     work_packages_offset: int = 1,
-    max_memberships: int = 50,
-    memberships_offset: int = 1,
-    user_question: str | None = None,
 ) -> dict[str, Any]:
     """
-    List work packages and return analysis + JSON payload ready to render.
+    List work packages (compact payload).
+    """
+    max_items = max(1, min(int(max_items), 200))
+    work_packages_offset = max(1, int(work_packages_offset))
+    result = await _post_tool(
+        "/tools/list_work_packages",
+        params={
+            "project_id": project_id,
+            "status": status,
+            "page_size": max_items,
+            "offset": work_packages_offset,
+        },
+    )
+    if isinstance(result, dict) and result.get("_error"):
+        return result
+    if not isinstance(result, dict):
+        return {"result": _safe_str(result)}
+    return _compact_collection(
+        result,
+        max_items=max_items,
+        fields=[
+            "id",
+            "subject",
+            "createdAt",
+            "startDate",
+            "dueDate",
+            "updatedAt",
+            "_links",
+        ],
+        title_field="subject",
+    )
+
+
+@tool("OpenProject_ProjectReport")
+async def openproject_project_report(
+    project_id: int,
+    status: str = "open",
+    max_items: int = 50,
+    work_packages_offset: int = 1,
+    max_memberships: int = 50,
+    memberships_offset: int = 1,
+) -> dict[str, Any]:
+    """
+    Build a project report (analysis + download link).
     """
     max_items = max(1, min(int(max_items), 200))
     work_packages_offset = max(1, int(work_packages_offset))
@@ -1466,15 +1506,6 @@ async def openproject_list_work_packages(
 
     analysis = "\n".join(analysis_lines)
     answer = None
-    if user_question and isinstance(user_question, str):
-        question_clean = user_question.strip()
-        if question_clean:
-            total_label = f"{len(items_sorted)} de {total}" if isinstance(total, int) else f"{len(items_sorted)}"
-            answer = (
-                f"Solicitud: {question_clean}\n"
-                f"Resultado: {total_label} paquetes en esta pagina. "
-                "Te dejo el resumen y el reporte completo en el enlace."
-            )
     try:
         html = _build_work_packages_report_html(
             project_id=project_id,
@@ -1509,11 +1540,8 @@ async def openproject_list_work_packages(
         "work_packages": work_packages,
         "analysis": analysis,
         "download_url": download_url,
-        "answer": answer,
         "rendered": (
-            f"{answer}\n\n{analysis}\n\nDescarga el reporte completo aqui: {download_url}"
-            if answer
-            else f"{analysis}\n\nDescarga el reporte completo aqui: {download_url}"
+            f"{analysis}\n\nDescarga el reporte completo aqui: {download_url}"
         ),
     }
 
@@ -1748,6 +1776,7 @@ openproject_tools: list[BaseTool] = [
     openproject_search_projects,
     openproject_get_project,
     openproject_list_work_packages,
+    openproject_project_report,
     openproject_get_work_package,
     openproject_create_work_package,
     openproject_update_work_package,
