@@ -1469,9 +1469,11 @@ async def openproject_list_work_packages(
     if user_question and isinstance(user_question, str):
         question_clean = user_question.strip()
         if question_clean:
+            total_label = f"{len(items_sorted)} de {total}" if isinstance(total, int) else f"{len(items_sorted)}"
             answer = (
-                "Recibi tu consulta y genere el resumen con los datos reales del proyecto. "
-                "Si necesitas un foco especifico (estado, responsable, fechas), dímelo y lo preparo."
+                f"Solicitud: {question_clean}\n"
+                f"Resultado: {total_label} paquetes en esta pagina. "
+                "Te dejo el resumen y el reporte completo en el enlace."
             )
     try:
         html = _build_work_packages_report_html(
