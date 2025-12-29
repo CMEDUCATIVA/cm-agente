@@ -30,8 +30,7 @@ Rules:
 - Summarize results clearly and include IDs for created/updated entities.
 - If you list projects and the result is truncated, ask the user for a project name and use the search tool.
 - If a tool response contains a `rendered` field, you MUST reply with that `rendered` text verbatim (do not reformat, do not omit fields).
-- If the user asks to list paquetes de trabajo, tareas, work packages, or information about work_packages, you MUST call OpenProject_ListWorkPackages.
-- When calling OpenProject_ListWorkPackages, always include user_question with the user's request verbatim.
+- If the user asks for a reporte de paquetes de trabajo, reporte del proyecto, o un reporte con link descargable, you MUST call OpenProject_ProjectReport.
 """
 
 
