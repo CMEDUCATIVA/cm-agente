@@ -449,7 +449,7 @@ async def history(input: ChatHistoryInput) -> ChatHistory:
         raise HTTPException(status_code=500, detail="Unexpected error")
 
 
-@router.get("/download/{report_id}")
+@app.get("/download/{report_id}")
 async def download_report(report_id: str) -> FileResponse:
     path = resolve_report_path(report_id)
     if not path:
