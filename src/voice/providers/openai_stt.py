@@ -24,7 +24,13 @@ class OpenAISTT:
         self.client = OpenAI(api_key=api_key) if api_key else OpenAI()
         logger.info("OpenAI STT initialized")
 
-    def transcribe(self, audio_file: BinaryIO) -> str:
+    def transcribe(
+        self,
+        audio_file: BinaryIO,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> str:
         """Transcribe audio using OpenAI Whisper.
 
         Args:
@@ -43,7 +49,13 @@ class OpenAISTT:
 
             # Call OpenAI Whisper API for transcription
             result = self.client.audio.transcriptions.create(
-                model="whisper-1", file=audio_file, response_format="text"
+                model="whisper-1",
+                file=(
+                    filename or getattr(audio_file, "name", None) or "audio.webm",
+                    audio_file,
+                    content_type or "audio/webm",
+                ),
+                response_format="text",
             )
 
             # Clean up whitespace from result
