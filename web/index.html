@@ -218,7 +218,7 @@
       }
 
       try {
-        const res = await fetch('/api/voice/turn', { method: 'POST', body: form });
+        const res = await fetch('/voice/turn', { method: 'POST', body: form });
         if (!res.ok) {
           const msg = await res.text();
           setStatus('Error en servidor', false);
