@@ -121,6 +121,7 @@
       <div class="controls">
         <button id="startBtn">Hablar</button>
         <button id="stopBtn" class="secondary" disabled>Enviar</button>
+        <button id="autoBtn" class="secondary">Continuo: OFF</button>
         <span class="status"><span id="dot" class="dot"></span><span id="statusText">Listo</span></span>
       </div>
 
@@ -150,6 +151,7 @@
   <script>
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
+    const autoBtn = document.getElementById('autoBtn');
     const statusText = document.getElementById('statusText');
     const dot = document.getElementById('dot');
     const transcriptEl = document.getElementById('transcript');
@@ -168,6 +170,15 @@
     let sourceBuffer;
     let endOfStreamPending = false;
     const logLines = [];
+    let autoMode = false;
+    const threadId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    let audioCtx;
+    let analyser;
+    let vadRunning = false;
+    let speechSeen = false;
+    let lastVoiceTs = 0;
+    const VAD_THRESHOLD = 0.02;
+    const VAD_SILENCE_MS = 900;
 
     function setStatus(text, live=false) {
       statusText.textContent = text;
@@ -220,7 +231,7 @@
       ws = new WebSocket(`${proto}://${location.host}/voice/ws`);
       ws.onopen = () => {
         setStatus('Conectado', false);
-        ws.send(JSON.stringify({ type: 'config' }));
+        ws.send(JSON.stringify({ type: 'config', thread_id: threadId }));
         log('ws open');
       };
       ws.onclose = () => {
@@ -236,6 +247,11 @@
         const msg = JSON.parse(event.data);
         if (msg.type === 'status') {
           setStatus(msg.value, msg.value === 'processing');
+          if (msg.value === 'done' && autoMode) {
+            setTimeout(() => {
+              if (!isRecording) startRecording();
+            }, 300);
+          }
         } else if (msg.type === 'transcript') {
           transcriptEl.textContent = msg.text || '(sin transcripcion)';
         } else if (msg.type === 'text_delta') {
@@ -272,6 +288,17 @@
         return;
       }
 
+      // VAD setup
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      const src = audioCtx.createMediaStreamSource(stream);
+      src.connect(analyser);
+      speechSeen = false;
+      lastVoiceTs = Date.now();
+      vadRunning = true;
+      runVad();
+
       chunks = [];
       mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
       mediaRecorder.ondataavailable = (e) => {
@@ -303,12 +330,39 @@
       stopBtn.disabled = false;
     }
 
+    function runVad() {
+      if (!vadRunning || !analyser) return;
+      const data = new Uint8Array(analyser.fftSize);
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      const now = Date.now();
+      if (rms > VAD_THRESHOLD) {
+        speechSeen = true;
+        lastVoiceTs = now;
+      }
+      if (speechSeen && now - lastVoiceTs > VAD_SILENCE_MS) {
+        stopRecording();
+        return;
+      }
+      requestAnimationFrame(runVad);
+    }
+
     function stopRecording() {
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
       }
       if (stream) {
         stream.getTracks().forEach(t => t.stop());
+      }
+      vadRunning = false;
+      if (audioCtx) {
+        audioCtx.close().catch(() => {});
+        audioCtx = null;
       }
       isRecording = false;
       startBtn.disabled = false;
@@ -320,6 +374,11 @@
 
     startBtn.addEventListener('click', startRecording);
     stopBtn.addEventListener('click', stopRecording);
+    autoBtn.addEventListener('click', () => {
+      autoMode = !autoMode;
+      autoBtn.textContent = autoMode ? 'Continuo: ON' : 'Continuo: OFF';
+      if (autoMode && !isRecording) startRecording();
+    });
     connectWs();
   </script>
 </body>
