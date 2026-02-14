@@ -570,7 +570,11 @@ async def realtime_session(request: Request) -> StreamingResponse:
     if not api_key:
         raise HTTPException(status_code=400, detail="OPENAI_API_KEY not configured")
 
-    sdp = (await request.body()).decode("utf-8", errors="ignore").strip()
+    raw = await request.body()
+    sdp = raw.decode("utf-8", errors="ignore")
+    logger.info("realtime_session: content_type=%s sdp_len=%s", request.headers.get("content-type"), len(sdp))
+    if sdp:
+        logger.debug("realtime_session: sdp_prefix=%s", sdp[:80].replace("\n", "\\n"))
     if not sdp:
         raise HTTPException(status_code=400, detail="missing_sdp_offer")
 
@@ -590,10 +594,10 @@ async def realtime_session(request: Request) -> StreamingResponse:
         resp = await client.post(
             url,
             headers=headers,
-            files=[
-                ("sdp", (None, sdp)),
-                ("session", (None, json.dumps(session_cfg))),
-            ],
+            files={
+                "sdp": (None, sdp),
+                "session": (None, json.dumps(session_cfg)),
+            },
         )
         if resp.status_code >= 400:
             logger.error("Realtime session error: %s %s", resp.status_code, resp.text)
