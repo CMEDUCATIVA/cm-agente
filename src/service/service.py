@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+import httpx
+from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
@@ -562,6 +563,46 @@ async def voice_turn(
     }
 
 
+@router.post("/realtime/session")
+async def realtime_session(request: Request) -> StreamingResponse:
+    """Create an OpenAI Realtime session via WebRTC SDP exchange."""
+    api_key = settings.OPENAI_API_KEY.get_secret_value() if settings.OPENAI_API_KEY else None
+    if not api_key:
+        raise HTTPException(status_code=400, detail="OPENAI_API_KEY not configured")
+
+    sdp = (await request.body()).decode("utf-8", errors="ignore").strip()
+    if not sdp:
+        raise HTTPException(status_code=400, detail="missing_sdp_offer")
+
+    model = getattr(settings, "REALTIME_MODEL", None) or "gpt-realtime"
+    voice = getattr(settings, "REALTIME_VOICE", None) or "alloy"
+
+    session_cfg = {
+        "type": "realtime",
+        "model": model,
+        "audio": {"output": {"voice": voice}},
+    }
+
+    form = {
+        "sdp": sdp,
+        "session": json.dumps(session_cfg),
+    }
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    url = "https://api.openai.com/v1/realtime/sessions"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url, headers=headers, data=form)
+        if resp.status_code >= 400:
+            logger.error("Realtime session error: %s %s", resp.status_code, resp.text)
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    return StreamingResponse(
+        content=iter([resp.text]),
+        media_type="application/sdp",
+    )
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
@@ -591,4 +632,12 @@ async def voice_web() -> FileResponse:
     index = web_dir / "index.html"
     if not index.exists():
         raise HTTPException(status_code=404, detail="Voice web not found")
+    return FileResponse(index, media_type="text/html")
+
+
+@app.get("/realtime")
+async def realtime_web() -> FileResponse:
+    index = web_dir / "realtime.html"
+    if not index.exists():
+        raise HTTPException(status_code=404, detail="Realtime web not found")
     return FileResponse(index, media_type="text/html")
