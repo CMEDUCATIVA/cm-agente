@@ -1,6 +1,7 @@
 """ElevenLabs text-to-speech implementation."""
 
 import logging
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
@@ -94,6 +95,39 @@ class ElevenLabsTTS:
         except Exception as e:
             logger.error("ElevenLabs TTS failed: %s", e, exc_info=True)
             return None
+
+    async def stream(self, text: str) -> AsyncGenerator[bytes, None]:
+        """Stream speech audio bytes from text."""
+        prepared_text = self._prepare_text(text)
+        if not prepared_text:
+            return
+
+        payload: dict[str, Any] = {"text": prepared_text, "model_id": self.model_id}
+        if self.language_code:
+            payload["language_code"] = self.language_code
+        if self.voice_settings:
+            payload["voice_settings"] = self.voice_settings
+
+        url = f"{self.base_url}/v1/text-to-speech/{self.voice_id}/stream"
+        headers = {
+            "xi-api-key": self.api_key,
+            "accept": self._format,
+            "content-type": "application/json",
+        }
+        params = {"output_format": self.output_format}
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream(
+                    "POST", url, headers=headers, params=params, json=payload
+                ) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
+        except Exception as e:
+            logger.error("ElevenLabs TTS stream failed: %s", e, exc_info=True)
+            return
 
     def get_format(self) -> str:
         """Get audio format (MIME type)."""
