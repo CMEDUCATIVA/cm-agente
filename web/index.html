@@ -158,7 +158,7 @@
     let stream;
     let isRecording = false;
     let audioQueue = [];
-    let sentAudio = false;
+    let chunks = [];
     let mediaSource;
     let sourceBuffer;
     let endOfStreamPending = false;
@@ -251,17 +251,12 @@
         return;
       }
 
+      chunks = [];
       mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-      mediaRecorder.ondataavailable = async (e) => {
-        if (!e.data || e.data.size === 0 || !ws || ws.readyState !== WebSocket.OPEN) return;
-        const buf = await e.data.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-        ws.send(JSON.stringify({ type: 'audio_chunk', data: btoa(binary), mime: e.data.type }));
-        sentAudio = true;
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
       };
-      mediaRecorder.start(250);
+      mediaRecorder.start();
       isRecording = true;
       setStatus('Grabando...', true);
       startBtn.disabled = true;
@@ -281,14 +276,22 @@
       setStatus('Procesando...', false);
 
       if (ws && ws.readyState === WebSocket.OPEN) {
-        if (!sentAudio && textInput.value.trim()) {
+        if (chunks.length > 0) {
+          const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
+          blob.arrayBuffer().then((buf) => {
+            const bytes = new Uint8Array(buf);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            ws.send(JSON.stringify({ type: 'audio', data: btoa(binary), mime: blob.type }));
+            ws.send(JSON.stringify({ type: 'end' }));
+          });
+        } else if (textInput.value.trim()) {
           ws.send(JSON.stringify({ type: 'text', text: textInput.value.trim() }));
           textInput.value = '';
         } else {
-          ws.send(JSON.stringify({ type: 'end' }));
+          setStatus('No hay audio ni texto', false);
         }
       }
-      sentAudio = false;
     }
 
     startBtn.addEventListener('click', startRecording);
