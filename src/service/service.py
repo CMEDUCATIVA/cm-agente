@@ -478,16 +478,33 @@ async def voice_turn(
 ) -> dict[str, Any]:
     """Single turn voice interaction: audio/text -> LLM -> audio."""
     transcript: str | None = None
+    logger.info(
+        "voice_turn request: has_audio=%s has_text=%s agent_id=%s model=%s",
+        bool(audio),
+        bool(text and text.strip()),
+        agent_id,
+        model,
+    )
 
     if not audio and not (text and text.strip()):
         raise HTTPException(status_code=400, detail="audio or text is required")
 
     if audio:
+        logger.info(
+            "voice_turn audio: filename=%s content_type=%s",
+            audio.filename,
+            audio.content_type,
+        )
         stt = SpeechToText.from_env()
         if not stt:
             raise HTTPException(status_code=400, detail="VOICE_STT_PROVIDER not configured")
-        transcript = stt.transcribe(audio.file)
+        try:
+            transcript = stt.transcribe(audio.file)
+        except Exception as e:
+            logger.exception("voice_turn transcription exception")
+            raise HTTPException(status_code=500, detail="transcription_exception")
         if not transcript:
+            logger.warning("voice_turn transcription failed or empty")
             raise HTTPException(status_code=400, detail="transcription_failed")
 
     message = transcript or (text or "").strip()
