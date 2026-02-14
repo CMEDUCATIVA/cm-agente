@@ -190,6 +190,9 @@
     const VAD_SILENCE_MS = 900;
     let processing = false;
     let isSpeaking = false;
+    let audioEnded = true;
+    let responseDone = false;
+    let audioReceived = false;
 
     function setStatus(text, live=false) {
       statusText.textContent = text;
@@ -206,6 +209,9 @@
     function resetAudioStream() {
       audioQueue = [];
       endOfStreamPending = false;
+      audioEnded = false;
+      responseDone = false;
+      audioReceived = false;
       mediaSource = new MediaSource();
       audioEl.src = URL.createObjectURL(mediaSource);
       mediaSource.addEventListener('sourceopen', () => {
@@ -261,9 +267,10 @@
           if (msg.value === 'processing') processing = true;
           if (msg.value === 'done' || msg.value === 'error') processing = false;
           if (msg.value === 'done' && autoMode) {
-            setTimeout(() => {
-              if (!isRecording && !isSpeaking) startRecording(true);
-            }, 300);
+            responseDone = true;
+            if (!audioReceived && !isRecording) {
+              startRecording(true);
+            }
           }
         } else if (msg.type === 'transcript') {
           transcriptEl.textContent = msg.text || '(sin transcripcion)';
@@ -273,11 +280,12 @@
           replyEl.textContent = msg.text || replyEl.textContent;
         } else if (msg.type === 'audio_chunk') {
           isSpeaking = true;
+          audioReceived = true;
+          audioEnded = false;
           if (!mediaSource) resetAudioStream();
           pushAudioChunk(msg.data);
           audioEl.play().catch(() => {});
         } else if (msg.type === 'audio_end') {
-          isSpeaking = false;
           endOfStreamPending = true;
           appendNextChunk();
         } else if (msg.type === 'error') {
@@ -393,6 +401,15 @@
       autoMode = !autoMode;
       autoBtn.textContent = autoMode ? 'Continuo: ON' : 'Continuo: OFF';
       if (autoMode && !isRecording) startRecording();
+    });
+    audioEl.addEventListener('play', () => {
+      isSpeaking = true;
+      audioEnded = false;
+    });
+    audioEl.addEventListener('ended', () => {
+      isSpeaking = false;
+      audioEnded = true;
+      if (autoMode && responseDone && !isRecording) startRecording(true);
     });
     connectWs();
   </script>
