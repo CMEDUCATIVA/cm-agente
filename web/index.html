@@ -193,6 +193,10 @@
     let audioEnded = true;
     let responseDone = false;
     let audioReceived = false;
+    let audioBufferedBytes = 0;
+    let playbackStarted = false;
+    const MIN_PLAY_BYTES = 32000;
+    const MIN_APPEND_BYTES = 6000;
 
     function setStatus(text, live=false) {
       statusText.textContent = text;
@@ -212,6 +216,8 @@
       audioEnded = false;
       responseDone = false;
       audioReceived = false;
+      audioBufferedBytes = 0;
+      playbackStarted = false;
       mediaSource = new MediaSource();
       audioEl.src = URL.createObjectURL(mediaSource);
       mediaSource.addEventListener('sourceopen', () => {
@@ -224,7 +230,24 @@
     function appendNextChunk() {
       if (!sourceBuffer || sourceBuffer.updating) return;
       if (audioQueue.length > 0) {
-        sourceBuffer.appendBuffer(audioQueue.shift());
+        let total = 0;
+        let parts = [];
+        while (audioQueue.length > 0 && total < MIN_APPEND_BYTES) {
+          const part = audioQueue.shift();
+          parts.push(part);
+          total += part.length;
+        }
+        if (parts.length === 1) {
+          sourceBuffer.appendBuffer(parts[0]);
+        } else {
+          const merged = new Uint8Array(total);
+          let offset = 0;
+          for (const part of parts) {
+            merged.set(part, offset);
+            offset += part.length;
+          }
+          sourceBuffer.appendBuffer(merged);
+        }
       } else if (endOfStreamPending && mediaSource.readyState === 'open') {
         mediaSource.endOfStream();
       }
@@ -237,7 +260,12 @@
         bytes[i] = binary.charCodeAt(i);
       }
       audioQueue.push(bytes);
+      audioBufferedBytes += bytes.length;
       appendNextChunk();
+      if (!playbackStarted && audioBufferedBytes >= MIN_PLAY_BYTES) {
+        playbackStarted = true;
+        audioEl.play().catch(() => {});
+      }
     }
 
     function connectWs() {
@@ -284,10 +312,13 @@
           audioEnded = false;
           if (!mediaSource) resetAudioStream();
           pushAudioChunk(msg.data);
-          audioEl.play().catch(() => {});
         } else if (msg.type === 'audio_end') {
           endOfStreamPending = true;
           appendNextChunk();
+          if (!playbackStarted) {
+            playbackStarted = true;
+            audioEl.play().catch(() => {});
+          }
         } else if (msg.type === 'error') {
           setStatus('Error', false);
           replyEl.textContent = msg.message || 'Error';
