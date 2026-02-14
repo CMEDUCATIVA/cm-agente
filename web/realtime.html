@@ -143,8 +143,15 @@
     async function connect() {
       connectBtn.disabled = true;
       setStatus('Conectando...', true);
+      log('Iniciando WebRTC...');
 
       pc = new RTCPeerConnection();
+      pc.onicegatheringstatechange = () => {
+        log(`ICE state: ${pc.iceGatheringState}`);
+      };
+      pc.onconnectionstatechange = () => {
+        log(`RTC state: ${pc.connectionState}`);
+      };
       dc = pc.createDataChannel('oai-events');
       dc.onopen = () => log('DataChannel listo');
       dc.onmessage = (e) => {
@@ -156,7 +163,14 @@
         } catch {}
       };
 
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        log(`Error mic: ${err && err.message ? err.message : err}`);
+        setStatus('Error mic', false);
+        connectBtn.disabled = false;
+        return;
+      }
       micTrack = localStream.getAudioTracks()[0];
       micTrack.enabled = false; // push-to-talk inicial
       pc.addTrack(micTrack, localStream);
@@ -177,6 +191,7 @@
       });
 
       const sdp = pc.localDescription && pc.localDescription.sdp ? pc.localDescription.sdp : '';
+      log(`SDP length: ${sdp.length}`);
 
       const res = await fetch('/realtime/session', {
         method: 'POST',
@@ -186,13 +201,14 @@
 
       if (!res.ok) {
         const msg = await res.text();
-        log(`Error: ${msg}`);
+        log(`Error /realtime/session: ${msg}`);
         setStatus('Error', false);
         connectBtn.disabled = false;
         return;
       }
 
       const answerSdp = await res.text();
+      log(`Answer SDP length: ${answerSdp.length}`);
       await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
       setStatus('Conectado', true);
