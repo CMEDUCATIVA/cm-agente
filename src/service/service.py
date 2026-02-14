@@ -498,6 +498,8 @@ async def _transcribe_audio(audio_bytes: bytes, content_type: str | None) -> str
     stt = SpeechToText.from_env()
     if not stt:
         raise HTTPException(status_code=400, detail="VOICE_STT_PROVIDER not configured")
+    if content_type and ";" in content_type:
+        content_type = content_type.split(";", 1)[0].strip()
     filename = "audio.webm" if content_type and "webm" in content_type else "audio.wav"
     return await asyncio.to_thread(
         stt.transcribe, io.BytesIO(audio_bytes), filename=filename, content_type=content_type
@@ -640,6 +642,12 @@ async def voice_ws(ws: WebSocket) -> None:
                 data = msg.get("data") or ""
                 if data:
                     buffer.extend(base64.b64decode(data))
+            elif msg_type == "audio":
+                if msg.get("mime"):
+                    audio_mime = msg.get("mime")
+                data = msg.get("data") or ""
+                if data:
+                    buffer = bytearray(base64.b64decode(data))
             elif msg_type == "end":
                 await stop_current()
                 audio_bytes = bytes(buffer)
