@@ -193,11 +193,21 @@
       const sdp = pc.localDescription && pc.localDescription.sdp ? pc.localDescription.sdp : '';
       log(`SDP length: ${sdp.length}`);
 
-      const res = await fetch('/realtime/session', {
-        method: 'POST',
-        headers: { 'content-type': 'application/sdp' },
-        body: sdp
-      });
+      log('Enviando /realtime/session...');
+      let res;
+      try {
+        res = await fetch('/realtime/session', {
+          method: 'POST',
+          headers: { 'content-type': 'application/sdp' },
+          body: sdp
+        });
+        log(`Respuesta /realtime/session: ${res.status}`);
+      } catch (err) {
+        log(`Error fetch /realtime/session: ${err && err.message ? err.message : err}`);
+        setStatus('Error', false);
+        connectBtn.disabled = false;
+        return;
+      }
 
       if (!res.ok) {
         const msg = await res.text();
