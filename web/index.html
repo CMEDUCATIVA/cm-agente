@@ -277,6 +277,25 @@
       mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
       };
+      mediaRecorder.onstop = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          if (chunks.length > 0) {
+            const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
+            blob.arrayBuffer().then((buf) => {
+              const bytes = new Uint8Array(buf);
+              let binary = '';
+              for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+              ws.send(JSON.stringify({ type: 'audio', data: btoa(binary), mime: blob.type }));
+              ws.send(JSON.stringify({ type: 'end' }));
+            });
+          } else if (textInput.value.trim()) {
+            ws.send(JSON.stringify({ type: 'text', text: textInput.value.trim() }));
+            textInput.value = '';
+          } else {
+            setStatus('No hay audio ni texto', false);
+          }
+        }
+      };
       mediaRecorder.start();
       isRecording = true;
       setStatus('Grabando...', true);
@@ -296,23 +315,7 @@
       stopBtn.disabled = true;
       setStatus('Procesando...', false);
 
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        if (chunks.length > 0) {
-          const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
-          blob.arrayBuffer().then((buf) => {
-            const bytes = new Uint8Array(buf);
-            let binary = '';
-            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-            ws.send(JSON.stringify({ type: 'audio', data: btoa(binary), mime: blob.type }));
-            ws.send(JSON.stringify({ type: 'end' }));
-          });
-        } else if (textInput.value.trim()) {
-          ws.send(JSON.stringify({ type: 'text', text: textInput.value.trim() }));
-          textInput.value = '';
-        } else {
-          setStatus('No hay audio ni texto', false);
-        }
-      }
+      // Envio ocurre en onstop para asegurar que MediaRecorder ya genero datos
     }
 
     startBtn.addEventListener('click', startRecording);
