@@ -168,10 +168,20 @@
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
+      // Wait for ICE gathering to complete so SDP has candidates
+      await new Promise((resolve) => {
+        if (pc.iceGatheringState === 'complete') return resolve();
+        pc.addEventListener('icegatheringstatechange', () => {
+          if (pc.iceGatheringState === 'complete') resolve();
+        }, { once: true });
+      });
+
+      const sdp = pc.localDescription && pc.localDescription.sdp ? pc.localDescription.sdp : '';
+
       const res = await fetch('/realtime/session', {
         method: 'POST',
         headers: { 'content-type': 'application/sdp' },
-        body: offer.sdp
+        body: sdp
       });
 
       if (!res.ok) {
