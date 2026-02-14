@@ -1,3 +1,4 @@
+import base64
 import inspect
 import json
 import logging
@@ -5,13 +6,15 @@ import secrets
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from langchain_core._api import LangChainBetaWarning
 from langchain_core.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -41,9 +44,11 @@ from service.utils import (
     langchain_to_chat_message,
     remove_tool_calls,
 )
+from voice import SpeechToText, TextToSpeech
 
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -462,6 +467,80 @@ async def download_report(report_id: str) -> FileResponse:
     )
 
 
+@router.post("/voice/turn")
+async def voice_turn(
+    audio: UploadFile | None = File(default=None),
+    text: str | None = Form(default=None),
+    agent_id: str = Form(default=DEFAULT_AGENT),
+    model: str | None = Form(default=None),
+    thread_id: str | None = Form(default=None),
+    user_id: str | None = Form(default=None),
+) -> dict[str, Any]:
+    """Single turn voice interaction: audio/text -> LLM -> audio."""
+    transcript: str | None = None
+
+    if not audio and not (text and text.strip()):
+        raise HTTPException(status_code=400, detail="audio or text is required")
+
+    if audio:
+        stt = SpeechToText.from_env()
+        if not stt:
+            raise HTTPException(status_code=400, detail="VOICE_STT_PROVIDER not configured")
+        transcript = stt.transcribe(audio.file)
+        if not transcript:
+            raise HTTPException(status_code=400, detail="transcription_failed")
+
+    message = transcript or (text or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="empty_message")
+
+    payload: dict[str, Any] = {"message": message}
+    if thread_id:
+        payload["thread_id"] = thread_id
+    if user_id:
+        payload["user_id"] = user_id
+    if model:
+        payload["model"] = model
+
+    try:
+        user_input = UserInput.model_validate(payload)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    agent: AgentGraph = get_agent(agent_id)
+    kwargs, run_id = await _handle_input(user_input, agent)
+
+    response_events: list[tuple[str, Any]] = await agent.ainvoke(
+        **kwargs, stream_mode=["updates", "values"]
+    )  # type: ignore
+    response_type, response = response_events[-1]
+    if response_type == "values":
+        output = langchain_to_chat_message(response["messages"][-1])
+    elif response_type == "updates" and "__interrupt__" in response:
+        output = langchain_to_chat_message(AIMessage(content=response["__interrupt__"][0].value))
+    else:
+        raise HTTPException(status_code=500, detail="unexpected_response_type")
+
+    reply_text = output.content
+    audio_base64 = None
+    audio_mime = None
+
+    tts = TextToSpeech.from_env()
+    if tts and reply_text.strip():
+        audio_bytes = tts.generate(reply_text)
+        if audio_bytes:
+            audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+            audio_mime = tts.get_format()
+
+    return {
+        "transcript": transcript,
+        "reply_text": reply_text,
+        "audio_base64": audio_base64,
+        "audio_mime": audio_mime,
+        "run_id": str(run_id),
+    }
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
@@ -480,3 +559,15 @@ async def health_check():
 
 
 app.include_router(router)
+
+web_dir = BASE_DIR / "web"
+if web_dir.exists():
+    app.mount("/web", StaticFiles(directory=str(web_dir), html=True), name="web")
+
+
+@app.get("/voice")
+async def voice_web() -> FileResponse:
+    index = web_dir / "index.html"
+    if not index.exists():
+        raise HTTPException(status_code=404, detail="Voice web not found")
+    return FileResponse(index, media_type="text/html")
