@@ -188,6 +188,8 @@
     let lastVoiceTs = 0;
     const VAD_THRESHOLD = 0.02;
     const VAD_SILENCE_MS = 900;
+    let processing = false;
+    let isSpeaking = false;
 
     function setStatus(text, live=false) {
       statusText.textContent = text;
@@ -256,9 +258,11 @@
         const msg = JSON.parse(event.data);
         if (msg.type === 'status') {
           setStatus(msg.value, msg.value === 'processing');
+          if (msg.value === 'processing') processing = true;
+          if (msg.value === 'done' || msg.value === 'error') processing = false;
           if (msg.value === 'done' && autoMode) {
             setTimeout(() => {
-              if (!isRecording) startRecording();
+              if (!isRecording && !isSpeaking) startRecording(true);
             }, 300);
           }
         } else if (msg.type === 'transcript') {
@@ -268,10 +272,12 @@
         } else if (msg.type === 'final_text') {
           replyEl.textContent = msg.text || replyEl.textContent;
         } else if (msg.type === 'audio_chunk') {
+          isSpeaking = true;
           if (!mediaSource) resetAudioStream();
           pushAudioChunk(msg.data);
           audioEl.play().catch(() => {});
         } else if (msg.type === 'audio_end') {
+          isSpeaking = false;
           endOfStreamPending = true;
           appendNextChunk();
         } else if (msg.type === 'error') {
@@ -281,12 +287,12 @@
       };
     }
 
-    async function startRecording() {
+    async function startRecording(auto = false) {
       connectWs();
       replyEl.textContent = '';
       transcriptEl.textContent = '—';
       resetAudioStream();
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (!auto && (processing || isSpeaking) && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'interrupt' }));
       }
 
