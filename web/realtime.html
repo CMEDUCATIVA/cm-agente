@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CM-Agente Realtime</title>
+  <style>
+    :root {
+      --bg: #f6f2ed;
+      --panel: #ffffff;
+      --ink: #1c1c1c;
+      --muted: #6b6b6b;
+      --accent: #e04f2a;
+      --accent-2: #2b7a78;
+      --ring: rgba(224, 79, 42, 0.25);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #fbe9df, transparent),
+                  radial-gradient(1000px 500px at 120% 10%, #d6f0ee, transparent),
+                  var(--bg);
+      color: var(--ink);
+    }
+    .wrap {
+      max-width: 860px;
+      margin: 48px auto;
+      padding: 0 20px;
+    }
+    .card {
+      background: var(--panel);
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+    }
+    h1 {
+      font-size: 28px;
+      margin: 0 0 8px;
+      letter-spacing: -0.3px;
+    }
+    .sub {
+      color: var(--muted);
+      margin: 0 0 24px;
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+    button {
+      appearance: none;
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      padding: 12px 18px;
+      border-radius: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.08s ease, box-shadow 0.2s ease;
+      box-shadow: 0 6px 18px var(--ring);
+    }
+    button.secondary { background: #111; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    button:active { transform: translateY(1px); }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #f2f2f2;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #bbb;
+    }
+    .dot.live { background: var(--accent); box-shadow: 0 0 0 6px var(--ring); }
+    .panel {
+      background: #fafafa;
+      border: 1px dashed #e0e0e0;
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 14px;
+    }
+    .label { font-weight: 600; margin-bottom: 6px; }
+    audio { width: 100%; margin-top: 8px; }
+    .hint { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Conversacion Realtime</h1>
+      <p class="sub">WebRTC full-duplex con barge-in basico. Abre microfono y puedes interrumpir.</p>
+
+      <div class="controls">
+        <button id="connectBtn">Conectar</button>
+        <button id="talkBtn" class="secondary" disabled>Hablar (mute)</button>
+        <button id="interruptBtn" disabled>Interrumpir</button>
+        <span class="status"><span id="dot" class="dot"></span><span id="statusText">Desconectado</span></span>
+      </div>
+
+      <div class="panel">
+        <div class="label">Estado</div>
+        <div id="log">—</div>
+        <div class="hint">Requiere HTTPS o localhost para el microfono.</div>
+      </div>
+
+      <audio id="remoteAudio" autoplay></audio>
+    </div>
+  </div>
+
+  <script>
+    const connectBtn = document.getElementById('connectBtn');
+    const talkBtn = document.getElementById('talkBtn');
+    const interruptBtn = document.getElementById('interruptBtn');
+    const statusText = document.getElementById('statusText');
+    const dot = document.getElementById('dot');
+    const logEl = document.getElementById('log');
+    const remoteAudio = document.getElementById('remoteAudio');
+
+    let pc;
+    let dc;
+    let localStream;
+    let micTrack;
+
+    function setStatus(text, live=false) {
+      statusText.textContent = text;
+      dot.classList.toggle('live', live);
+    }
+
+    function log(msg) {
+      logEl.textContent = msg;
+    }
+
+    async function connect() {
+      connectBtn.disabled = true;
+      setStatus('Conectando...', true);
+
+      pc = new RTCPeerConnection();
+      dc = pc.createDataChannel('oai-events');
+      dc.onopen = () => log('DataChannel listo');
+      dc.onmessage = (e) => {
+        try {
+          const evt = JSON.parse(e.data);
+          if (evt.type === 'response.audio.delta') {
+            // Audio llega por la pista remota, solo log ligero
+          }
+        } catch {}
+      };
+
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micTrack = localStream.getAudioTracks()[0];
+      micTrack.enabled = false; // push-to-talk inicial
+      pc.addTrack(micTrack, localStream);
+
+      pc.ontrack = (event) => {
+        remoteAudio.srcObject = event.streams[0];
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      const res = await fetch('/realtime/session', {
+        method: 'POST',
+        headers: { 'content-type': 'application/sdp' },
+        body: offer.sdp
+      });
+
+      if (!res.ok) {
+        const msg = await res.text();
+        log(`Error: ${msg}`);
+        setStatus('Error', false);
+        connectBtn.disabled = false;
+        return;
+      }
+
+      const answerSdp = await res.text();
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+      setStatus('Conectado', true);
+      talkBtn.disabled = false;
+      interruptBtn.disabled = false;
+    }
+
+    function toggleTalk() {
+      if (!micTrack) return;
+      micTrack.enabled = !micTrack.enabled;
+      talkBtn.textContent = micTrack.enabled ? 'Hablar (on)' : 'Hablar (mute)';
+      if (micTrack.enabled) {
+        // Si el usuario empieza a hablar, cancelamos la respuesta actual
+        sendEvent({ type: 'response.cancel' });
+      }
+    }
+
+    function sendEvent(payload) {
+      if (dc && dc.readyState === 'open') {
+        dc.send(JSON.stringify(payload));
+      }
+    }
+
+    connectBtn.addEventListener('click', connect);
+    talkBtn.addEventListener('click', toggleTalk);
+    interruptBtn.addEventListener('click', () => sendEvent({ type: 'response.cancel' }));
+  </script>
+</body>
+</html>
