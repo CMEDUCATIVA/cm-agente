@@ -590,8 +590,10 @@ async def realtime_session(request: Request) -> StreamingResponse:
         resp = await client.post(
             url,
             headers=headers,
-            data={"session": json.dumps(session_cfg)},
-            files={"sdp": ("offer.sdp", sdp, "application/sdp")},
+            files=[
+                ("sdp", (None, sdp)),
+                ("session", (None, json.dumps(session_cfg))),
+            ],
         )
         if resp.status_code >= 400:
             logger.error("Realtime session error: %s %s", resp.status_code, resp.text)
