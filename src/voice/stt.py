@@ -144,15 +144,25 @@ class SpeechToText:
             logger.error(f"Failed to create STT provider: {e}", exc_info=True)
             return None
 
-    def transcribe(self, audio_file: BinaryIO) -> str:
+    def transcribe(
+        self,
+        audio_file: BinaryIO,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> str:
         """Transcribe audio to text.
 
         Delegates to the underlying provider implementation.
 
         Args:
             audio_file: Binary audio file
+            filename: Optional filename with extension (helps format detection)
+            content_type: Optional MIME type
 
         Returns:
             Transcribed text (empty string on failure)
         """
-        return self._provider.transcribe(audio_file)
+        return self._provider.transcribe(
+            audio_file, filename=filename, content_type=content_type
+        )
