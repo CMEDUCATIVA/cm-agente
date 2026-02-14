@@ -205,6 +205,20 @@ class TextToSpeech:
         """
         return self._provider.generate(text)
 
+    async def stream(self, text: str):
+        """Stream speech audio from text when supported.
+
+        Falls back to a single chunk if provider doesn't support streaming.
+        """
+        stream_fn = getattr(self._provider, "stream", None)
+        if callable(stream_fn):
+            async for chunk in stream_fn(text):
+                yield chunk
+        else:
+            audio = self._provider.generate(text)
+            if audio:
+                yield audio
+
     def get_format(self) -> str:
         """Get audio format (MIME type) for this provider.
 
@@ -212,4 +226,3 @@ class TextToSpeech:
             MIME type string (e.g., "audio/mp3")
         """
         return self._provider.get_format()
-
