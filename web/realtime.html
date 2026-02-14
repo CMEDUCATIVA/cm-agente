@@ -187,17 +187,21 @@
         await pc.setLocalDescription(offer);
         log('Offer listo');
 
-        // Wait for ICE gathering to complete so SDP has candidates
-        await new Promise((resolve) => {
-          if (pc.iceGatheringState === 'complete') return resolve();
-          pc.addEventListener(
-            'icegatheringstatechange',
-            () => {
-              if (pc.iceGatheringState === 'complete') resolve();
-            },
-            { once: true }
-          );
-        });
+        // Wait for ICE gathering to complete so SDP has candidates (with timeout)
+        await Promise.race([
+          new Promise((resolve) => {
+            if (pc.iceGatheringState === 'complete') return resolve();
+            pc.addEventListener(
+              'icegatheringstatechange',
+              () => {
+                if (pc.iceGatheringState === 'complete') resolve();
+              },
+              { once: true }
+            );
+          }),
+          new Promise((resolve) => setTimeout(resolve, 2000)),
+        ]);
+        log(`ICE final: ${pc.iceGatheringState}`);
 
         const sdp = pc.localDescription && pc.localDescription.sdp ? pc.localDescription.sdp : '';
         log(`SDP length: ${sdp.length}`);
