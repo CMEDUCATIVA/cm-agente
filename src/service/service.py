@@ -499,7 +499,11 @@ async def voice_turn(
         if not stt:
             raise HTTPException(status_code=400, detail="VOICE_STT_PROVIDER not configured")
         try:
-            transcript = stt.transcribe(audio.file)
+            transcript = stt.transcribe(
+                audio.file,
+                filename=audio.filename,
+                content_type=audio.content_type,
+            )
         except Exception as e:
             logger.exception("voice_turn transcription exception")
             raise HTTPException(status_code=500, detail="transcription_exception")
