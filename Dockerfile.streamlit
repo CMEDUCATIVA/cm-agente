@@ -10,7 +10,9 @@ COPY uv.lock .
 RUN pip install --no-cache-dir uv
 
 # Install only the dependencies needed for the client application.
-RUN uv sync --frozen --only-group client
+# NOTE: Do not use --frozen here so new client deps (e.g. openai) are picked up
+# without requiring a uv.lock update in this image.
+RUN uv sync --only-group client
 
 # Plotly (para gráficos en el chat) y Kaleido (PNG opcional)
 RUN pip install --no-cache-dir plotly kaleido
