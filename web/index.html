@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CM-Agente Voz</title>
+  <style>
+    :root {
+      --bg: #f6f2ed;
+      --panel: #ffffff;
+      --ink: #1c1c1c;
+      --muted: #6b6b6b;
+      --accent: #e04f2a;
+      --accent-2: #2b7a78;
+      --ring: rgba(224, 79, 42, 0.25);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #fbe9df, transparent),
+                  radial-gradient(1000px 500px at 120% 10%, #d6f0ee, transparent),
+                  var(--bg);
+      color: var(--ink);
+    }
+    .wrap {
+      max-width: 860px;
+      margin: 48px auto;
+      padding: 0 20px;
+    }
+    .card {
+      background: var(--panel);
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+    }
+    h1 {
+      font-size: 28px;
+      margin: 0 0 8px;
+      letter-spacing: -0.3px;
+    }
+    .sub {
+      color: var(--muted);
+      margin: 0 0 24px;
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+    button {
+      appearance: none;
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      padding: 12px 18px;
+      border-radius: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.08s ease, box-shadow 0.2s ease;
+      box-shadow: 0 6px 18px var(--ring);
+    }
+    button.secondary {
+      background: #111;
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    button:active { transform: translateY(1px); }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #f2f2f2;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #bbb;
+    }
+    .dot.live { background: var(--accent); box-shadow: 0 0 0 6px var(--ring); }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 80px;
+      border-radius: 12px;
+      border: 1px solid #ddd;
+      padding: 12px;
+      font-size: 14px;
+      resize: vertical;
+    }
+    .panel {
+      background: #fafafa;
+      border: 1px dashed #e0e0e0;
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 14px;
+    }
+    .label { font-weight: 600; margin-bottom: 6px; }
+    audio { width: 100%; margin-top: 8px; }
+    .hint { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Conversacion por Voz</h1>
+      <p class="sub">Modo push-to-talk. Habla, envia y recibe audio. Se corta el audio si empiezas a hablar.</p>
+
+      <div class="controls">
+        <button id="startBtn">Empezar a hablar</button>
+        <button id="stopBtn" class="secondary" disabled>Detener y enviar</button>
+        <span class="status"><span id="dot" class="dot"></span><span id="statusText">Listo</span></span>
+      </div>
+
+      <div class="row">
+        <div>
+          <div class="label">Texto (opcional)</div>
+          <textarea id="textInput" placeholder="Escribe si no quieres usar audio..."></textarea>
+          <div class="hint">Si grabas audio, el texto se ignora.</div>
+        </div>
+        <div class="panel">
+          <div class="label">Transcripcion</div>
+          <div id="transcript">�</div>
+        </div>
+        <div class="panel">
+          <div class="label">Respuesta</div>
+          <div id="reply">�</div>
+          <audio id="audio" controls></audio>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const statusText = document.getElementById('statusText');
+    const dot = document.getElementById('dot');
+    const transcriptEl = document.getElementById('transcript');
+    const replyEl = document.getElementById('reply');
+    const audioEl = document.getElementById('audio');
+    const textInput = document.getElementById('textInput');
+
+    let mediaRecorder;
+    let chunks = [];
+    let stream;
+
+    function setStatus(text, live=false) {
+      statusText.textContent = text;
+      dot.classList.toggle('live', live);
+    }
+
+    function stopAudioPlayback() {
+      if (!audioEl.paused) {
+        audioEl.pause();
+        audioEl.currentTime = 0;
+      }
+    }
+
+    async function startRecording() {
+      stopAudioPlayback();
+      transcriptEl.textContent = '�';
+      replyEl.textContent = '�';
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        setStatus('Permiso de microfono denegado', false);
+        return;
+      }
+
+      chunks = [];
+      mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+      mediaRecorder.onstop = sendAudio;
+      mediaRecorder.start();
+
+      setStatus('Grabando...', true);
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      setStatus('Procesando...', false);
+    }
+
+    async function sendAudio() {
+      const blob = chunks.length ? new Blob(chunks, { type: 'audio/webm' }) : null;
+      const form = new FormData();
+
+      if (blob) {
+        form.append('audio', blob, 'audio.webm');
+      } else if (textInput.value.trim()) {
+        form.append('text', textInput.value.trim());
+      } else {
+        setStatus('No hay audio ni texto', false);
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/voice/turn', { method: 'POST', body: form });
+        if (!res.ok) {
+          const msg = await res.text();
+          setStatus('Error en servidor', false);
+          replyEl.textContent = msg;
+          return;
+        }
+        const data = await res.json();
+        transcriptEl.textContent = data.transcript || '(sin transcripcion)';
+        replyEl.textContent = data.reply_text || '';
+        if (data.audio_base64) {
+          audioEl.src = `data:${data.audio_mime};base64,${data.audio_base64}`;
+          audioEl.play().catch(() => {});
+        }
+        setStatus('Listo', false);
+      } catch (err) {
+        setStatus('Error de red', false);
+      }
+    }
+
+    startBtn.addEventListener('click', startRecording);
+    stopBtn.addEventListener('click', stopRecording);
+  </script>
+</body>
+</html>
