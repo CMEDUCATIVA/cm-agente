@@ -1,5 +1,7 @@
+import asyncio
 import base64
 import inspect
+import io
 import json
 import logging
 import secrets
@@ -11,7 +13,19 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
@@ -466,6 +480,183 @@ async def download_report(report_id: str) -> FileResponse:
         filename=f"reporte_{report_id}.html",
         content_disposition_type="attachment",
     )
+
+
+def _pop_tts_segment(buffer: str, min_len: int = 80, max_len: int = 220) -> tuple[str | None, str]:
+    if len(buffer) < min_len:
+        return None, buffer
+    for sep in [".", "?", "!", "\n", ";", ":"]:
+        idx = buffer.rfind(sep)
+        if idx >= min_len:
+            return buffer[: idx + 1].strip(), buffer[idx + 1 :].lstrip()
+    if len(buffer) >= max_len:
+        return buffer[:max_len].strip(), buffer[max_len:].lstrip()
+    return None, buffer
+
+
+async def _transcribe_audio(audio_bytes: bytes, content_type: str | None) -> str | None:
+    stt = SpeechToText.from_env()
+    if not stt:
+        raise HTTPException(status_code=400, detail="VOICE_STT_PROVIDER not configured")
+    filename = "audio.webm" if content_type and "webm" in content_type else "audio.wav"
+    return await asyncio.to_thread(
+        stt.transcribe, io.BytesIO(audio_bytes), filename=filename, content_type=content_type
+    )
+
+
+@router.websocket("/voice/ws")
+async def voice_ws(ws: WebSocket) -> None:
+    await ws.accept()
+
+    buffer = bytearray()
+    audio_mime: str | None = None
+    current_task: asyncio.Task | None = None
+    cancel_event = asyncio.Event()
+
+    config: dict[str, Any] = {
+        "agent_id": DEFAULT_AGENT,
+        "model": None,
+        "thread_id": None,
+        "user_id": None,
+    }
+
+    async def stop_current() -> None:
+        nonlocal current_task
+        if current_task and not current_task.done():
+            cancel_event.set()
+            current_task.cancel()
+            try:
+                await current_task
+            except Exception:
+                pass
+        current_task = None
+
+    async def run_turn(audio_bytes: bytes, content_type: str | None, text: str | None) -> None:
+        nonlocal cancel_event
+        cancel_event = asyncio.Event()
+        await ws.send_json({"type": "status", "value": "processing"})
+
+        transcript = None
+        if audio_bytes:
+            transcript = await _transcribe_audio(audio_bytes, content_type)
+
+        message = transcript or (text or "").strip()
+        if not message:
+            await ws.send_json({"type": "error", "message": "empty_message"})
+            return
+
+        await ws.send_json({"type": "transcript", "text": transcript or ""})
+
+        user_payload: dict[str, Any] = {"message": message}
+        if config.get("thread_id"):
+            user_payload["thread_id"] = config["thread_id"]
+        if config.get("user_id"):
+            user_payload["user_id"] = config["user_id"]
+        if config.get("model"):
+            user_payload["model"] = config["model"]
+
+        user_input = UserInput.model_validate(user_payload)
+        agent: AgentGraph = get_agent(config.get("agent_id") or DEFAULT_AGENT)
+        kwargs, _ = await _handle_input(user_input, agent)
+
+        tts = TextToSpeech.from_env()
+        if not tts or tts.provider != "elevenlabs":
+            await ws.send_json({"type": "error", "message": "ELEVENLABS TTS not configured"})
+            return
+
+        text_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def tts_worker() -> None:
+            try:
+                while True:
+                    segment = await text_queue.get()
+                    if segment is None:
+                        break
+                    async for audio_chunk in tts.stream(segment):
+                        if cancel_event.is_set():
+                            return
+                        payload = {
+                            "type": "audio_chunk",
+                            "mime": tts.get_format(),
+                            "data": base64.b64encode(audio_chunk).decode("ascii"),
+                        }
+                        await ws.send_json(payload)
+            finally:
+                await ws.send_json({"type": "audio_end"})
+
+        tts_task = asyncio.create_task(tts_worker())
+
+        reply_text = ""
+        buffer_text = ""
+        try:
+            async for stream_event in agent.astream(
+                **kwargs, stream_mode=["messages"], subgraphs=True
+            ):
+                if cancel_event.is_set():
+                    break
+                if not isinstance(stream_event, tuple):
+                    continue
+                if len(stream_event) == 3:
+                    _, stream_mode, event = stream_event
+                else:
+                    stream_mode, event = stream_event
+                if stream_mode != "messages":
+                    continue
+                msg, metadata = event
+                if "skip_stream" in metadata.get("tags", []):
+                    continue
+                if not isinstance(msg, AIMessageChunk):
+                    continue
+                content = remove_tool_calls(msg.content)
+                if not content:
+                    continue
+                delta = convert_message_content_to_string(content)
+                reply_text += delta
+                buffer_text += delta
+                await ws.send_json({"type": "text_delta", "text": delta})
+
+                segment, buffer_text = _pop_tts_segment(buffer_text)
+                if segment:
+                    await text_queue.put(segment)
+
+            if buffer_text.strip():
+                await text_queue.put(buffer_text.strip())
+        finally:
+            await text_queue.put(None)
+            await tts_task
+
+        await ws.send_json({"type": "final_text", "text": reply_text})
+        await ws.send_json({"type": "status", "value": "done"})
+
+    try:
+        while True:
+            msg = await ws.receive_json()
+            msg_type = msg.get("type")
+            if msg_type == "config":
+                config.update({k: v for k, v in msg.items() if k in config})
+            elif msg_type == "audio_chunk":
+                if msg.get("mime"):
+                    audio_mime = msg.get("mime")
+                data = msg.get("data") or ""
+                if data:
+                    buffer.extend(base64.b64decode(data))
+            elif msg_type == "end":
+                await stop_current()
+                audio_bytes = bytes(buffer)
+                mime = audio_mime
+                buffer = bytearray()
+                current_task = asyncio.create_task(run_turn(audio_bytes, mime, msg.get("text")))
+            elif msg_type == "text":
+                await stop_current()
+                buffer = bytearray()
+                current_task = asyncio.create_task(run_turn(b"", None, msg.get("text")))
+            elif msg_type == "interrupt":
+                await stop_current()
+                await ws.send_json({"type": "status", "value": "interrupted"})
+            else:
+                await ws.send_json({"type": "error", "message": "unknown_message"})
+    except WebSocketDisconnect:
+        await stop_current()
 
 
 @router.post("/voice/turn")
