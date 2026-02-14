@@ -48,7 +48,7 @@ from voice import SpeechToText, TextToSpeech
 
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[1]
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
