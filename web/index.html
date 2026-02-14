@@ -110,6 +110,15 @@
     .label { font-weight: 600; margin-bottom: 6px; }
     audio { width: 100%; margin-top: 8px; }
     .hint { font-size: 12px; color: var(--muted); }
+    .log-box {
+      max-height: 220px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+      background: #f7f3ef;
+      border-radius: 8px;
+      padding: 8px;
+    }
   </style>
 </head>
 <body>
@@ -133,7 +142,7 @@
         </div>
         <div class="panel">
           <div class="label">Estado</div>
-          <div id="log">—</div>
+          <div id="log" class="log-box">—</div>
         </div>
         <div class="panel">
           <div class="label">Transcripcion</div>
@@ -188,8 +197,8 @@
 
     function log(msg) {
       logLines.push(msg);
-      if (logLines.length > 10) logLines.shift();
       logEl.textContent = logLines.join('\n');
+      logEl.scrollTop = logEl.scrollHeight;
     }
 
     function resetAudioStream() {
