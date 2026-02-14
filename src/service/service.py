@@ -504,7 +504,7 @@ async def _transcribe_audio(audio_bytes: bytes, content_type: str | None) -> str
     )
 
 
-@router.websocket("/voice/ws")
+@app.websocket("/voice/ws")
 async def voice_ws(ws: WebSocket) -> None:
     await ws.accept()
 
