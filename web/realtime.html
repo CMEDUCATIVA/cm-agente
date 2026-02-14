@@ -136,8 +136,11 @@
       dot.classList.toggle('live', live);
     }
 
+    const logLines = [];
     function log(msg) {
-      logEl.textContent = msg;
+      logLines.push(msg);
+      if (logLines.length > 8) logLines.shift();
+      logEl.textContent = logLines.join('\n');
     }
 
     async function connect() {
