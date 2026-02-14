@@ -197,6 +197,8 @@
     let playbackStarted = false;
     const MIN_PLAY_BYTES = 32000;
     const MIN_APPEND_BYTES = 6000;
+    const MIN_RECORD_BYTES = 6000;
+    let recordedBytes = 0;
 
     function setStatus(text, live=false) {
       statusText.textContent = text;
@@ -354,12 +356,25 @@
       runVad();
 
       chunks = [];
+      recordedBytes = 0;
       mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunks.push(e.data);
+        if (e.data && e.data.size > 0) {
+          chunks.push(e.data);
+          recordedBytes += e.data.size;
+        }
       };
       mediaRecorder.onstop = () => {
         if (ws && ws.readyState === WebSocket.OPEN) {
+          if (recordedBytes < MIN_RECORD_BYTES) {
+            log(`audio too short (${recordedBytes} bytes), retry`);
+            if (autoMode) {
+              setTimeout(() => {
+                if (!isRecording) startRecording(true);
+              }, 300);
+            }
+            return;
+          }
           if (chunks.length > 0) {
             const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
             blob.arrayBuffer().then((buf) => {
