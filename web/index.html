@@ -131,6 +131,10 @@
           <div class="hint">Si grabas audio, el texto se ignora.</div>
         </div>
         <div class="panel">
+          <div class="label">Estado</div>
+          <div id="log">—</div>
+        </div>
+        <div class="panel">
           <div class="label">Transcripcion</div>
           <div id="transcript">�</div>
         </div>
@@ -152,6 +156,7 @@
     const replyEl = document.getElementById('reply');
     const audioEl = document.getElementById('audio');
     const textInput = document.getElementById('textInput');
+    const logEl = document.getElementById('log');
 
     let ws;
     let mediaRecorder;
@@ -162,10 +167,18 @@
     let mediaSource;
     let sourceBuffer;
     let endOfStreamPending = false;
+    const logLines = [];
 
     function setStatus(text, live=false) {
       statusText.textContent = text;
       dot.classList.toggle('live', live);
+      log(`status: ${text}`);
+    }
+
+    function log(msg) {
+      logLines.push(msg);
+      if (logLines.length > 10) logLines.shift();
+      logEl.textContent = logLines.join('\n');
     }
 
     function resetAudioStream() {
@@ -208,10 +221,18 @@
       ws.onopen = () => {
         setStatus('Conectado', false);
         ws.send(JSON.stringify({ type: 'config' }));
+        log('ws open');
       };
-      ws.onclose = () => setStatus('Desconectado', false);
-      ws.onerror = () => setStatus('Error WS', false);
+      ws.onclose = () => {
+        setStatus('Desconectado', false);
+        log('ws close');
+      };
+      ws.onerror = () => {
+        setStatus('Error WS', false);
+        log('ws error');
+      };
       ws.onmessage = (event) => {
+        log(`ws message: ${event.data.slice(0, 120)}`);
         const msg = JSON.parse(event.data);
         if (msg.type === 'status') {
           setStatus(msg.value, msg.value === 'processing');
