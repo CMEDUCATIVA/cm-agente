@@ -583,16 +583,15 @@ async def realtime_session(request: Request) -> StreamingResponse:
         "audio": {"output": {"voice": voice}},
     }
 
-    form = {
-        "sdp": sdp,
-        "session": json.dumps(session_cfg),
-    }
-
     headers = {"Authorization": f"Bearer {api_key}"}
     url = "https://api.openai.com/v1/realtime/sessions"
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(url, headers=headers, data=form)
+        resp = await client.post(
+            url,
+            headers=headers,
+            json={"sdp": sdp, "session": session_cfg},
+        )
         if resp.status_code >= 400:
             logger.error("Realtime session error: %s %s", resp.status_code, resp.text)
             raise HTTPException(status_code=resp.status_code, detail=resp.text)
