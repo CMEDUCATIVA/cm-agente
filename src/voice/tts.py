@@ -4,6 +4,7 @@ This module provides a factory class that loads the appropriate TTS provider
 based on configuration.
 """
 
+import json
 import logging
 import os
 from typing import Literal, cast
@@ -100,16 +101,28 @@ class TextToSpeech:
                 return OpenAITTS(api_key=api_key, voice=voice, model=model)
 
             case "elevenlabs":
-                # Example for future extensions: to add ElevenLabs support, implement ElevenLabsTTS provider and uncomment:
-                # from voice.providers.elevenlabs_tts import ElevenLabsTTS
-                # voice_id = config.get("voice_id")
-                # model_id = config.get("model_id", "eleven_monolingual_v1")
-                # return ElevenLabsTTS(api_key=api_key, voice_id=voice_id, model_id=model_id)
-                raise NotImplementedError("ElevenLabs TTS provider not yet implemented")
+                from voice.providers.elevenlabs_tts import ElevenLabsTTS
+
+                voice_id = config.get("voice_id")
+                model_id = config.get("model_id", "eleven_multilingual_v2")
+                output_format = config.get("output_format", "mp3_44100_128")
+                language_code = config.get("language_code")
+                voice_settings = config.get("voice_settings")
+
+                return ElevenLabsTTS(
+                    api_key=api_key,
+                    voice_id=voice_id,
+                    model_id=model_id,
+                    output_format=output_format,
+                    language_code=language_code,
+                    voice_settings=voice_settings,
+                )
 
             case _:
                 # Catch-all for unknown providers
-                raise ValueError(f"Unknown TTS provider: {provider}. Available providers: openai")
+                raise ValueError(
+                    f"Unknown TTS provider: {provider}. Available providers: openai, elevenlabs"
+                )
 
     @property
     def provider(self) -> str:
@@ -144,9 +157,36 @@ class TextToSpeech:
             return None
 
         try:
+            config: dict = {}
+            if provider == "openai":
+                # Optional overrides for OpenAI TTS
+                config = {
+                    "voice": os.getenv("OPENAI_TTS_VOICE", "alloy"),
+                    "model": os.getenv("OPENAI_TTS_MODEL", "tts-1"),
+                }
+            elif provider == "elevenlabs":
+                # ElevenLabs-specific settings
+                voice_settings = None
+                voice_settings_raw = os.getenv("ELEVENLABS_VOICE_SETTINGS")
+                if voice_settings_raw:
+                    try:
+                        voice_settings = json.loads(voice_settings_raw)
+                    except json.JSONDecodeError:
+                        logger.error(
+                            "Invalid ELEVENLABS_VOICE_SETTINGS JSON, ignoring it",
+                            exc_info=True,
+                        )
+                config = {
+                    "voice_id": os.getenv("ELEVENLABS_VOICE_ID"),
+                    "model_id": os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2"),
+                    "output_format": os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128"),
+                    "language_code": os.getenv("ELEVENLABS_LANGUAGE_CODE"),
+                    "voice_settings": voice_settings,
+                }
+
             # Create instance with provider from environment
             # Validates provider and raises ValueError if invalid
-            return cls(provider=cast(Provider, provider))
+            return cls(provider=cast(Provider, provider), **config)
         except Exception as e:
             # Log error but don't crash - allow app to continue without voice
             logger.error(f"Failed to create TTS provider: {e}", exc_info=True)
@@ -172,3 +212,4 @@ class TextToSpeech:
             MIME type string (e.g., "audio/mp3")
         """
         return self._provider.get_format()
+
