@@ -780,6 +780,7 @@ async def realtime_session(request: Request) -> StreamingResponse:
     model = getattr(settings, "REALTIME_MODEL", None) or "gpt-realtime"
     voice = getattr(settings, "REALTIME_VOICE", None) or "alloy"
 
+    logger.info("realtime_session config: model=%s voice=%s", model, voice)
     session_cfg = {
         "type": "realtime",
         "model": model,
