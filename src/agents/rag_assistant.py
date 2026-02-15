@@ -48,10 +48,18 @@ instructions = f"""
     """
 
 
-def wrap_model(model: BaseChatModel) -> RunnableSerializable[AgentState, AIMessage]:
+def wrap_model(
+    model: BaseChatModel, extra_instructions: str | None
+) -> RunnableSerializable[AgentState, AIMessage]:
     bound_model = model.bind_tools(tools)
+    system_text = instructions
+    if extra_instructions:
+        system_text = (
+            f"{instructions}\n\n<instrucciones_usuario>\n{extra_instructions}\n</instrucciones_usuario>"
+        )
     preprocessor = RunnableLambda(
-        lambda state: [SystemMessage(content=instructions)] + state["messages"][-MAX_HISTORY_MESSAGES:],
+        lambda state: [SystemMessage(content=system_text)]
+        + state["messages"][-MAX_HISTORY_MESSAGES:],
         name="StateModifier",
     )
     return preprocessor | bound_model  # type: ignore[return-value]
@@ -66,7 +74,8 @@ def format_safety_message(safety: LlamaGuardOutput) -> AIMessage:
 
 async def acall_model(state: AgentState, config: RunnableConfig) -> AgentState:
     m = get_model(config["configurable"].get("model", settings.DEFAULT_MODEL))
-    model_runnable = wrap_model(m)
+    extra = config["configurable"].get("instructions")
+    model_runnable = wrap_model(m, extra)
     response = await model_runnable.ainvoke(state, config)
 
     # Run llama guard check here to avoid returning the message if it's unsafe
