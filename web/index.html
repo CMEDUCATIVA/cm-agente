@@ -195,8 +195,8 @@
     let audioReceived = false;
     let audioBufferedBytes = 0;
     let playbackStarted = false;
-    const MIN_PLAY_BYTES = 32000;
-    const MIN_APPEND_BYTES = 6000;
+    const MIN_PLAY_BYTES = 48000;
+    const MIN_APPEND_BYTES = 12000;
     const MIN_RECORD_BYTES = 6000;
     let recordedBytes = 0;
 
@@ -252,6 +252,8 @@
         }
       } else if (endOfStreamPending && mediaSource.readyState === 'open') {
         mediaSource.endOfStream();
+      } else if (playbackStarted && audioEl.paused) {
+        audioEl.play().catch(() => {});
       }
     }
 
@@ -461,3 +463,4 @@
   </script>
 </body>
 </html>
+
