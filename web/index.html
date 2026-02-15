@@ -200,6 +200,7 @@
     function setStatus(text, live=false) {
       statusText.textContent = text;
       dot.classList.toggle('live', live);
+      log(`status: ${text}`);
     }
 
     const logLines = [];
@@ -271,14 +272,16 @@
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${proto}://${location.host}/voice/ws`);
       ws.onopen = () => {
-        log('WS LLM/TTS conectado');
+        log('ws: abierto');
         ws.send(JSON.stringify({ type: 'config' }));
+        log('ws: enviado config');
       };
-      ws.onclose = () => log('WS LLM/TTS cerrado');
-      ws.onerror = () => log('WS LLM/TTS error');
+      ws.onclose = () => log('ws: cerrado');
+      ws.onerror = () => log('ws: error');
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
+          log(`ws: ${msg.type}`);
           if (msg.type === 'text_delta') {
             if (replyEl) replyEl.textContent += msg.text || '';
           } else if (msg.type === 'final_text') {
@@ -286,6 +289,7 @@
           } else if (msg.type === 'audio_chunk') {
             if (!mediaSource) resetAudioStream();
             pushAudioChunk(msg.data);
+            log(`ws: audio_chunk (${msg.data ? msg.data.length : 0})`);
           } else if (msg.type === 'audio_end') {
             endOfStreamPending = true;
             appendNextChunk();
@@ -293,6 +297,7 @@
               playbackStarted = true;
               remoteAudio.play().catch(() => {});
             }
+            log('ws: audio_end');
           } else if (msg.type === 'error') {
             log(`LLM/TTS error: ${msg.message || 'error'}`);
           }
@@ -369,18 +374,18 @@
     async function connect() {
       connectBtn.disabled = true;
       setStatus('Conectando...', true);
-      log('Iniciando WebRTC...');
+      log('webrtc: iniciando');
       try {
         connectWs();
         pc = new RTCPeerConnection();
         pc.onicegatheringstatechange = () => {
-          log(`ICE state: ${pc.iceGatheringState}`);
+          log(`webrtc: ICE ${pc.iceGatheringState}`);
         };
         pc.onconnectionstatechange = () => {
-          log(`RTC state: ${pc.connectionState}`);
+          log(`webrtc: RTC ${pc.connectionState}`);
         };
         dc = pc.createDataChannel('oai-events');
-        dc.onopen = () => log('DataChannel listo');
+        dc.onopen = () => log('realtime: datachannel abierto');
         dc.onmessage = (e) => {
           try {
             const evt = JSON.parse(e.data);
@@ -389,11 +394,15 @@
             } else if (evt.type === 'conversation.item.input_audio_transcription.completed') {
               const text = evt.transcript || '';
               if (text && transcriptEl) transcriptEl.textContent = text;
+              log(`realtime: transcripcion (${text.length} chars)`);
               if (text && ws && ws.readyState === WebSocket.OPEN) {
                 if (replyEl) replyEl.textContent = '';
                 resetAudioStream();
                 ws.send(JSON.stringify({ type: 'text', text }));
+                log('ws: enviado texto al LLM');
               }
+            } else if (evt.type) {
+              log(`realtime: ${evt.type}`);
             }
           } catch {}
         };
@@ -413,10 +422,10 @@
         // Realtime audio no se usa en este flujo
         pc.ontrack = () => {};
 
-        log('Creando offer...');
+        log('webrtc: creando offer');
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        log('Offer listo');
+        log('webrtc: offer listo');
 
         // Wait for ICE gathering to complete so SDP has candidates (with timeout)
         await Promise.race([
@@ -432,12 +441,12 @@
           }),
           new Promise((resolve) => setTimeout(resolve, 2000)),
         ]);
-        log(`ICE final: ${pc.iceGatheringState}`);
+        log(`webrtc: ICE final ${pc.iceGatheringState}`);
 
         const sdp = pc.localDescription && pc.localDescription.sdp ? pc.localDescription.sdp : '';
-        log(`SDP length: ${sdp.length}`);
+        log(`webrtc: SDP length ${sdp.length}`);
         if (!sdp) {
-          log('SDP vacio: abortando');
+          log('webrtc: SDP vacio');
           setStatus('Error', false);
           connectBtn.disabled = false;
           return;
@@ -445,13 +454,13 @@
 
         const voice = voiceSelect ? voiceSelect.value : '';
         const instructions = buildInstructions();
-        log(`Voz seleccionada: ${voice || '(default)'}`);
-        log(`Instrucciones: ${instructions ? 'si' : 'no'}`);
-        log('Enviando /realtime/session...');
+        log(`realtime: voz ${voice || '(default)'}`);
+        log(`realtime: instrucciones ${instructions ? 'si' : 'no'}`);
+        log('realtime: enviando /realtime/session');
         let res;
         try {
           const url = voice ? `/realtime/session?voice=${encodeURIComponent(voice)}` : '/realtime/session';
-          log(`URL: ${url}`);
+          log(`realtime: url ${url}`);
           const headers = { 'content-type': 'application/sdp' };
           if (instructions) {
             const maxLen = 4000;
@@ -461,7 +470,7 @@
             const encoded = btoa(unescape(encodeURIComponent(payload)));
             headers['x-realtime-instructions-b64'] = encoded;
             if (instructions.length > maxLen) {
-              log(`Instrucciones truncadas a ${maxLen} caracteres`);
+              log(`realtime: instrucciones truncadas ${maxLen}`);
             }
           }
           res = await fetch(url, {
@@ -469,9 +478,9 @@
             headers,
             body: sdp
           });
-          log(`Respuesta /realtime/session: ${res.status}`);
+          log(`realtime: respuesta ${res.status}`);
         } catch (err) {
-          log(`Error fetch /realtime/session: ${err && err.message ? err.message : err}`);
+          log(`realtime: error fetch ${err && err.message ? err.message : err}`);
           setStatus('Error', false);
           connectBtn.disabled = false;
           return;
@@ -479,14 +488,14 @@
 
         if (!res.ok) {
           const msg = await res.text();
-          log(`Error /realtime/session: ${msg}`);
+          log(`realtime: error ${msg}`);
           setStatus('Error', false);
           connectBtn.disabled = false;
           return;
         }
 
         const answerSdp = await res.text();
-        log(`Answer SDP length: ${answerSdp.length}`);
+        log(`webrtc: answer SDP length ${answerSdp.length}`);
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
         setStatus('Conectado', true);
@@ -506,6 +515,7 @@
       if (micTrack.enabled) {
         // Si el usuario empieza a hablar, cancelamos la respuesta actual
         sendEvent({ type: 'response.cancel' });
+        log('realtime: respuesta cancelada');
       }
     }
 
