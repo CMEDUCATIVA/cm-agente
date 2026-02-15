@@ -308,7 +308,8 @@
             const payload = instructions.length > maxLen
               ? instructions.slice(0, maxLen)
               : instructions;
-            headers['x-realtime-instructions'] = payload;
+            const encoded = btoa(unescape(encodeURIComponent(payload)));
+            headers['x-realtime-instructions-b64'] = encoded;
             if (instructions.length > maxLen) {
               log(`Instrucciones truncadas a ${maxLen} caracteres`);
             }
