@@ -6,6 +6,7 @@ from langgraph.pregel import Pregel
 from agents.bg_task_agent.bg_task_agent import bg_task_agent
 from agents.chatbot import chatbot
 from agents.command_agent import command_agent
+from agents.call_center_agent import call_center_agent
 from agents.github_mcp_agent.github_mcp_agent import github_mcp_agent
 from agents.interrupt_agent import interrupt_agent
 from agents.knowledge_base_agent import kb_agent
@@ -52,6 +53,10 @@ agents: dict[str, Agent] = {
         graph_like=rag_assistant,
     ),
     "command-agent": Agent(description="A command agent.", graph_like=command_agent),
+    "agente-call-center": Agent(
+        description="Agente-Call-Center: atencion telefonica profesional y empatica.",
+        graph_like=call_center_agent,
+    ),
     "bg-task-agent": Agent(description="A background task agent.", graph_like=bg_task_agent),
     "langgraph-supervisor-agent": Agent(
         description="A langgraph supervisor agent", graph_like=langgraph_supervisor_agent
