@@ -482,7 +482,7 @@ async def download_report(report_id: str) -> FileResponse:
     )
 
 
-def _pop_tts_segment(buffer: str, min_len: int = 80, max_len: int = 220) -> tuple[str | None, str]:
+def _pop_tts_segment(buffer: str, min_len: int = 40, max_len: int = 160) -> tuple[str | None, str]:
     if len(buffer) < min_len:
         return None, buffer
     for sep in [".", "?", "!", "\n", ";", ":"]:
