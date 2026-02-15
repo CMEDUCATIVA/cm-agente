@@ -129,9 +129,25 @@
       </div>
 
       <div class="panel">
+        <div class="label">Transcripcion</div>
+        <div id="transcript">—</div>
+      </div>
+
+      <div class="panel">
+        <div class="label">Respuesta</div>
+        <div id="reply">—</div>
+        <audio id="remoteAudio" controls></audio>
+      </div>
+
+      <div class="panel">
         <div class="label">Instrucciones (estilo de habla)</div>
         <div class="hint">Se aplican al crear la sesiÃ³n. Cambia y reconecta.</div>
         <div style="display:grid;gap:8px;margin-top:8px;">
+          <textarea id="seqStep1" placeholder="Secuencia Paso 1: ..."></textarea>
+          <textarea id="seqStep2" placeholder="Secuencia Paso 2: ..."></textarea>
+          <textarea id="seqStep3" placeholder="Secuencia Paso 3: ..."></textarea>
+          <textarea id="seqStep4" placeholder="Secuencia Paso 4 (opcional): ..."></textarea>
+          <textarea id="seqStep5" placeholder="Secuencia Paso 5 (opcional): ..."></textarea>
           <textarea id="instBase" placeholder="Base: rol, idioma, tono general"></textarea>
           <textarea id="instStyle" placeholder="Estilo: longitud, ritmo, tecnicismos, formato"></textarea>
           <textarea id="instRules" placeholder="Reglas: lo que nunca debe hacer"></textarea>
@@ -140,7 +156,6 @@
         </div>
       </div>
 
-      <audio id="remoteAudio" autoplay></audio>
     </div>
   </div>
 
@@ -151,8 +166,15 @@
     const statusText = document.getElementById('statusText');
     const dot = document.getElementById('dot');
     const logEl = document.getElementById('log');
+    const transcriptEl = document.getElementById('transcript');
     const remoteAudio = document.getElementById('remoteAudio');
+    const replyEl = document.getElementById('reply');
     const voiceSelect = document.getElementById('voiceSelect');
+    const seqStep1 = document.getElementById('seqStep1');
+    const seqStep2 = document.getElementById('seqStep2');
+    const seqStep3 = document.getElementById('seqStep3');
+    const seqStep4 = document.getElementById('seqStep4');
+    const seqStep5 = document.getElementById('seqStep5');
     const instBase = document.getElementById('instBase');
     const instStyle = document.getElementById('instStyle');
     const instRules = document.getElementById('instRules');
@@ -164,6 +186,16 @@
     let dc;
     let localStream;
     let micTrack;
+    let ws;
+
+    let audioQueue = [];
+    let mediaSource;
+    let sourceBuffer;
+    let endOfStreamPending = false;
+    let audioBufferedBytes = 0;
+    let playbackStarted = false;
+    const MIN_PLAY_BYTES = 10000;
+    const MIN_APPEND_BYTES = 6000;
 
     function setStatus(text, live=false) {
       statusText.textContent = text;
@@ -177,12 +209,108 @@
       logEl.textContent = logLines.join('\n');
     }
 
+    function resetAudioStream() {
+      audioQueue = [];
+      endOfStreamPending = false;
+      audioBufferedBytes = 0;
+      playbackStarted = false;
+      mediaSource = new MediaSource();
+      remoteAudio.src = URL.createObjectURL(mediaSource);
+      mediaSource.addEventListener('sourceopen', () => {
+        sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+        sourceBuffer.addEventListener('updateend', appendNextChunk);
+        appendNextChunk();
+      }, { once: true });
+    }
+
+    function appendNextChunk() {
+      if (!sourceBuffer || sourceBuffer.updating) return;
+      if (audioQueue.length > 0) {
+        let total = 0;
+        let parts = [];
+        while (audioQueue.length > 0 && total < MIN_APPEND_BYTES) {
+          const part = audioQueue.shift();
+          parts.push(part);
+          total += part.length;
+        }
+        if (parts.length === 1) {
+          sourceBuffer.appendBuffer(parts[0]);
+        } else {
+          const merged = new Uint8Array(total);
+          let offset = 0;
+          for (const part of parts) {
+            merged.set(part, offset);
+            offset += part.length;
+          }
+          sourceBuffer.appendBuffer(merged);
+        }
+      } else if (endOfStreamPending && mediaSource.readyState === 'open') {
+        mediaSource.endOfStream();
+      }
+    }
+
+    function pushAudioChunk(b64) {
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      audioQueue.push(bytes);
+      audioBufferedBytes += bytes.length;
+      appendNextChunk();
+      if (!playbackStarted && audioBufferedBytes >= MIN_PLAY_BYTES) {
+        playbackStarted = true;
+        remoteAudio.play().catch(() => {});
+      }
+    }
+
+    function connectWs() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}/voice/ws`);
+      ws.onopen = () => {
+        log('WS LLM/TTS conectado');
+        ws.send(JSON.stringify({ type: 'config' }));
+      };
+      ws.onclose = () => log('WS LLM/TTS cerrado');
+      ws.onerror = () => log('WS LLM/TTS error');
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'text_delta') {
+            if (replyEl) replyEl.textContent += msg.text || '';
+          } else if (msg.type === 'final_text') {
+            if (replyEl) replyEl.textContent = msg.text || replyEl.textContent;
+          } else if (msg.type === 'audio_chunk') {
+            if (!mediaSource) resetAudioStream();
+            pushAudioChunk(msg.data);
+          } else if (msg.type === 'audio_end') {
+            endOfStreamPending = true;
+            appendNextChunk();
+            if (!playbackStarted) {
+              playbackStarted = true;
+              remoteAudio.play().catch(() => {});
+            }
+          } else if (msg.type === 'error') {
+            log(`LLM/TTS error: ${msg.message || 'error'}`);
+          }
+        } catch {}
+      };
+    }
+
     function loadInstructions() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
         const data = JSON.parse(raw);
         if (data.voice && voiceSelect) voiceSelect.value = data.voice;
+        if (data.seq1 && seqStep1) seqStep1.value = data.seq1;
+        if (data.seq2 && seqStep2) seqStep2.value = data.seq2;
+        if (data.seq3 && seqStep3) seqStep3.value = data.seq3;
+        if (data.seq4 && seqStep4) seqStep4.value = data.seq4;
+        if (data.seq5 && seqStep5) seqStep5.value = data.seq5;
         if (data.base && instBase) instBase.value = data.base;
         if (data.style && instStyle) instStyle.value = data.style;
         if (data.rules && instRules) instRules.value = data.rules;
@@ -198,6 +326,11 @@
       try {
         const data = {
           voice: voiceSelect ? voiceSelect.value : '',
+          seq1: seqStep1 ? seqStep1.value : '',
+          seq2: seqStep2 ? seqStep2.value : '',
+          seq3: seqStep3 ? seqStep3.value : '',
+          seq4: seqStep4 ? seqStep4.value : '',
+          seq5: seqStep5 ? seqStep5.value : '',
           base: instBase ? instBase.value : '',
           style: instStyle ? instStyle.value : '',
           rules: instRules ? instRules.value : '',
@@ -216,6 +349,15 @@
         const v = (value || '').trim();
         if (v) parts.push(`${label}:\n${v}`);
       };
+      const seqParts = [];
+      if (seqStep1 && seqStep1.value.trim()) seqParts.push(`1) ${seqStep1.value.trim()}`);
+      if (seqStep2 && seqStep2.value.trim()) seqParts.push(`2) ${seqStep2.value.trim()}`);
+      if (seqStep3 && seqStep3.value.trim()) seqParts.push(`3) ${seqStep3.value.trim()}`);
+      if (seqStep4 && seqStep4.value.trim()) seqParts.push(`4) ${seqStep4.value.trim()}`);
+      if (seqStep5 && seqStep5.value.trim()) seqParts.push(`5) ${seqStep5.value.trim()}`);
+      if (seqParts.length) {
+        push('Secuencia obligatoria', seqParts.join('\n'));
+      }
       push('Base', instBase && instBase.value);
       push('Estilo', instStyle && instStyle.value);
       push('Reglas', instRules && instRules.value);
@@ -229,6 +371,7 @@
       setStatus('Conectando...', true);
       log('Iniciando WebRTC...');
       try {
+        connectWs();
         pc = new RTCPeerConnection();
         pc.onicegatheringstatechange = () => {
           log(`ICE state: ${pc.iceGatheringState}`);
@@ -243,6 +386,14 @@
             const evt = JSON.parse(e.data);
             if (evt.type === 'response.audio.delta') {
               // Audio llega por la pista remota, solo log ligero
+            } else if (evt.type === 'conversation.item.input_audio_transcription.completed') {
+              const text = evt.transcript || '';
+              if (text && transcriptEl) transcriptEl.textContent = text;
+              if (text && ws && ws.readyState === WebSocket.OPEN) {
+                if (replyEl) replyEl.textContent = '';
+                resetAudioStream();
+                ws.send(JSON.stringify({ type: 'text', text }));
+              }
             }
           } catch {}
         };
@@ -259,9 +410,8 @@
         micTrack.enabled = false; // push-to-talk inicial
         pc.addTrack(micTrack, localStream);
 
-        pc.ontrack = (event) => {
-          remoteAudio.srcObject = event.streams[0];
-        };
+        // Realtime audio no se usa en este flujo
+        pc.ontrack = () => {};
 
         log('Creando offer...');
         const offer = await pc.createOffer();
@@ -376,6 +526,11 @@
     interruptBtn.addEventListener('click', () => sendEvent({ type: 'response.cancel' }));
 
     bindSave(voiceSelect);
+    bindSave(seqStep1);
+    bindSave(seqStep2);
+    bindSave(seqStep3);
+    bindSave(seqStep4);
+    bindSave(seqStep5);
     bindSave(instBase);
     bindSave(instStyle);
     bindSave(instRules);
