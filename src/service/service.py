@@ -561,10 +561,10 @@ async def voice_ws(ws: WebSocket) -> None:
     if vad_model and VADIterator:
         vad = VADIterator(
             vad_model,
-            threshold=0.5,
+            threshold=0.6,
             sampling_rate=16000,
-            min_silence_duration_ms=300,
-            speech_pad_ms=30,
+            min_silence_duration_ms=900,
+            speech_pad_ms=150,
         )
     vad_pcm_buffer = bytearray()
     utterance_buffer = bytearray()
