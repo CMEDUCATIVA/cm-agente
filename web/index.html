@@ -445,6 +445,7 @@
             replyEl.textContent = '';
             transcriptEl.textContent = '—';
             resetAudioStream();
+            log('flujo: silero_vad -> stt -> llm -> tts');
           }
           if (msg.value === 'done' && autoMode) {
             responseDone = true;
@@ -453,8 +454,10 @@
             stopPlayback();
           }
         } else if (msg.type === 'speech_start') {
+          log('silero_vad: speech_start');
           log('vad: speech_start');
         } else if (msg.type === 'speech_end') {
+          log('silero_vad: speech_end');
           log('vad: speech_end');
         } else if (msg.type === 'transcript') {
           transcriptEl.textContent = msg.text || '(sin transcripcion)';
