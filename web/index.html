@@ -131,6 +131,51 @@
       background: #fff;
       color: var(--ink);
     }
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 8px 0 12px;
+    }
+    .tab-btn {
+      appearance: none;
+      border: 1px solid #e6e1db;
+      background: #fff;
+      color: var(--ink);
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .tab-panel {
+      display: none;
+    }
+    .tab-panel.active {
+      display: block;
+    }
+    .tab-panel textarea {
+      width: 100%;
+      min-height: 90px;
+    }
+    .save-row {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+    }
+    #saveInstructionsBtn {
+      background: #111;
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
     #copyLogBtn {
       background: #111;
       color: #fff;
@@ -188,17 +233,44 @@
       <div class="panel">
         <div class="label">Instrucciones (estilo de habla)</div>
         <div class="hint">Se aplican al crear la sesiÃ³n. Cambia y reconecta.</div>
-        <div style="display:grid;gap:8px;margin-top:8px;">
-          <textarea id="seqStep1" placeholder="Secuencia Paso 1: ..."></textarea>
-          <textarea id="seqStep2" placeholder="Secuencia Paso 2: ..."></textarea>
-          <textarea id="seqStep3" placeholder="Secuencia Paso 3: ..."></textarea>
-          <textarea id="seqStep4" placeholder="Secuencia Paso 4 (opcional): ..."></textarea>
-          <textarea id="seqStep5" placeholder="Secuencia Paso 5 (opcional): ..."></textarea>
-          <textarea id="instBase" placeholder="Base: rol, idioma, tono general"></textarea>
-          <textarea id="instStyle" placeholder="Estilo: longitud, ritmo, tecnicismos, formato"></textarea>
+        <div class="tabs" role="tablist" aria-label="Tabs de instrucciones">
+          <button class="tab-btn active" type="button" data-tab="rol" role="tab" aria-selected="true">Rol</button>
+          <button class="tab-btn" type="button" data-tab="idioma" role="tab" aria-selected="false">Idioma</button>
+          <button class="tab-btn" type="button" data-tab="tono" role="tab" aria-selected="false">Tono/Estilo</button>
+          <button class="tab-btn" type="button" data-tab="secuencia" role="tab" aria-selected="false">Secuencia</button>
+          <button class="tab-btn" type="button" data-tab="reglas" role="tab" aria-selected="false">Reglas</button>
+          <button class="tab-btn" type="button" data-tab="especializacion" role="tab" aria-selected="false">EspecializaciÃ³n</button>
+          <button class="tab-btn" type="button" data-tab="extra" role="tab" aria-selected="false">Extra</button>
+        </div>
+        <div class="tab-panel active" data-tab-panel="rol" role="tabpanel">
+          <textarea id="instBase" placeholder="Rol: perfil del agente, objetivos y alcance"></textarea>
+        </div>
+        <div class="tab-panel" data-tab-panel="idioma" role="tabpanel">
+          <textarea id="instLanguage" placeholder="Idioma y variantes (ej. espaÃ±ol neutral, tÃº/usted)"></textarea>
+        </div>
+        <div class="tab-panel" data-tab-panel="tono" role="tabpanel">
+          <textarea id="instStyle" placeholder="Tono y estilo: longitud, ritmo, tecnicismos, formato"></textarea>
+        </div>
+        <div class="tab-panel" data-tab-panel="secuencia" role="tabpanel">
+          <div style="display:grid;gap:8px;">
+            <textarea id="seqStep1" placeholder="Secuencia Paso 1: ..."></textarea>
+            <textarea id="seqStep2" placeholder="Secuencia Paso 2: ..."></textarea>
+            <textarea id="seqStep3" placeholder="Secuencia Paso 3: ..."></textarea>
+            <textarea id="seqStep4" placeholder="Secuencia Paso 4 (opcional): ..."></textarea>
+            <textarea id="seqStep5" placeholder="Secuencia Paso 5 (opcional): ..."></textarea>
+          </div>
+        </div>
+        <div class="tab-panel" data-tab-panel="reglas" role="tabpanel">
           <textarea id="instRules" placeholder="Reglas: lo que nunca debe hacer"></textarea>
+        </div>
+        <div class="tab-panel" data-tab-panel="especializacion" role="tabpanel">
           <textarea id="instSpecial" placeholder="EspecializaciÃ³n: contexto de negocio/producto"></textarea>
+        </div>
+        <div class="tab-panel" data-tab-panel="extra" role="tabpanel">
           <textarea id="instExtra" placeholder="Extra: saludo fijo, cierre fijo, palabras prohibidas"></textarea>
+        </div>
+        <div class="save-row">
+          <button id="saveInstructionsBtn" type="button">Guardar</button>
         </div>
       </div>
 
@@ -217,12 +289,14 @@
     const remoteAudio = document.getElementById('remoteAudio');
     const replyEl = document.getElementById('reply');
     const agentSelect = document.getElementById('agentSelect');
+    const saveInstructionsBtn = document.getElementById('saveInstructionsBtn');
     const seqStep1 = document.getElementById('seqStep1');
     const seqStep2 = document.getElementById('seqStep2');
     const seqStep3 = document.getElementById('seqStep3');
     const seqStep4 = document.getElementById('seqStep4');
     const seqStep5 = document.getElementById('seqStep5');
     const instBase = document.getElementById('instBase');
+    const instLanguage = document.getElementById('instLanguage');
     const instStyle = document.getElementById('instStyle');
     const instRules = document.getElementById('instRules');
     const instSpecial = document.getElementById('instSpecial');
@@ -336,7 +410,8 @@
       ws.onopen = () => {
         log('ws: abierto');
         const agent_id = agentSelect ? agentSelect.value : undefined;
-        ws.send(JSON.stringify({ type: 'config', agent_id }));
+        const instructions = buildInstructions();
+        ws.send(JSON.stringify({ type: 'config', agent_id, instructions }));
         log('ws: enviado config');
       };
       ws.onclose = () => log('ws: cerrado');
@@ -379,6 +454,7 @@
         if (data.seq4 && seqStep4) seqStep4.value = data.seq4;
         if (data.seq5 && seqStep5) seqStep5.value = data.seq5;
         if (data.base && instBase) instBase.value = data.base;
+        if (data.language && instLanguage) instLanguage.value = data.language;
         if (data.style && instStyle) instStyle.value = data.style;
         if (data.rules && instRules) instRules.value = data.rules;
         if (data.special && instSpecial) instSpecial.value = data.special;
@@ -398,6 +474,7 @@
           seq4: seqStep4 ? seqStep4.value : '',
           seq5: seqStep5 ? seqStep5.value : '',
           base: instBase ? instBase.value : '',
+          language: instLanguage ? instLanguage.value : '',
           style: instStyle ? instStyle.value : '',
           rules: instRules ? instRules.value : '',
           special: instSpecial ? instSpecial.value : '',
@@ -425,6 +502,7 @@
         push('Secuencia obligatoria', seqParts.join('\n'));
       }
       push('Base', instBase && instBase.value);
+      push('Idioma', instLanguage && instLanguage.value);
       push('Estilo', instStyle && instStyle.value);
       push('Reglas', instRules && instRules.value);
       push('EspecializaciÃ³n', instSpecial && instSpecial.value);
@@ -590,6 +668,22 @@
       el.addEventListener('change', saveInstructions);
     };
 
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const tabPanels = document.querySelectorAll('.tab-panel');
+    function activateTab(tabId) {
+      tabButtons.forEach((btn) => {
+        const isActive = btn.dataset.tab === tabId;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      });
+      tabPanels.forEach((panel) => {
+        panel.classList.toggle('active', panel.dataset.tabPanel === tabId);
+      });
+    }
+    tabButtons.forEach((btn) => {
+      btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+    });
+
     connectBtn.addEventListener('click', connect);
     talkBtn.addEventListener('click', toggleTalk);
     interruptBtn.addEventListener('click', () => sendEvent({ type: 'response.cancel' }));
@@ -600,11 +694,23 @@
     bindSave(seqStep4);
     bindSave(seqStep5);
     bindSave(instBase);
+    bindSave(instLanguage);
     bindSave(instStyle);
     bindSave(instRules);
     bindSave(instSpecial);
     bindSave(instExtra);
     copyLogBtn.addEventListener('click', copyLog);
+    if (saveInstructionsBtn) {
+      saveInstructionsBtn.addEventListener('click', () => {
+        saveInstructions();
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          const agent_id = agentSelect ? agentSelect.value : undefined;
+          const instructions = buildInstructions();
+          ws.send(JSON.stringify({ type: 'config', agent_id, instructions }));
+        }
+        log('instrucciones: guardadas');
+      });
+    }
     loadInstructions();
     log('log listo');
   </script>
