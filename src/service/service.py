@@ -523,6 +523,7 @@ async def voice_ws(ws: WebSocket) -> None:
         "model": None,
         "thread_id": None,
         "user_id": None,
+        "instructions": None,
     }
 
     async def stop_current() -> None:
@@ -564,6 +565,8 @@ async def voice_ws(ws: WebSocket) -> None:
             user_payload["user_id"] = config["user_id"]
         if config.get("model"):
             user_payload["model"] = config["model"]
+        if config.get("instructions"):
+            user_payload["agent_config"] = {"instructions": config["instructions"]}
 
         user_input = UserInput.model_validate(user_payload)
         agent: AgentGraph = get_agent(config.get("agent_id") or DEFAULT_AGENT)
