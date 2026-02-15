@@ -55,6 +55,7 @@ class OpenAISTT:
                     audio_file,
                     content_type or "audio/webm",
                 ),
+                language="es",
                 response_format="text",
             )
 
