@@ -8,12 +8,8 @@ WORKDIR /app
 COPY pyproject.toml .
 COPY README.md .
 COPY LICENSE .
-COPY src/agents/ ./agents/
-COPY src/core/ ./core/
-COPY src/memory/ ./memory/
-COPY src/schema/ ./schema/
-COPY src/service/ ./service/
-COPY src/voice/ ./voice/
+# Ensure editable install can find the package at /app/src
+COPY src/ ./src/
 RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir -e .
 
