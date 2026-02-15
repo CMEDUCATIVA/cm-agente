@@ -158,7 +158,7 @@
     </div>
   </div>
 
-  <script>
+    <script>
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
     const autoBtn = document.getElementById('autoBtn');
@@ -172,45 +172,30 @@
     const logEl = document.getElementById('log');
 
     let ws;
-    let mediaRecorder;
-    let stream;
-    let isRecording = false;
     let audioQueue = [];
-    let chunks = [];
     let mediaSource;
     let sourceBuffer;
     let endOfStreamPending = false;
     const logLines = [];
     let autoMode = true;
     const threadId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-    let audioCtx;
-    let analyser;
-    let vadRunning = false;
-    let speechSeen = false;
-    let lastVoiceTs = 0;
-    let bargeStream;
-    let bargeCtx;
-    let bargeAnalyser;
-    let bargeRunning = false;
-    let bargeHits = 0;
-    const VAD_THRESHOLD = 0.03;
-    const VAD_SILENCE_MS = 900;
-    const VAD_MIN_VOICE_RATIO = 0.25;
-    const VAD_MIN_ENERGY_DB = -55;
-    const VAD_BARGE_HITS = 3;
-    const BARGE_COOLDOWN_MS = 800;
-    let processing = false;
     let isSpeaking = false;
-    let audioEnded = true;
     let responseDone = false;
     let audioReceived = false;
     let audioBufferedBytes = 0;
     let playbackStarted = false;
-    let playbackStartTs = 0;
     const MIN_PLAY_BYTES = 10000;
     const MIN_APPEND_BYTES = 6000;
-    const MIN_RECORD_BYTES = 6000;
-    let recordedBytes = 0;
+
+    let captureCtx;
+    let captureStream;
+    let captureSource;
+    let captureProcessor;
+    let captureGain;
+    let captureRunning = false;
+    let captureRequested = false;
+    const TARGET_SAMPLE_RATE = 16000;
+    const PROCESSOR_SIZE = 4096;
 
     function setStatus(text, live=false) {
       statusText.textContent = text;
@@ -241,7 +226,6 @@
     function resetAudioStream() {
       audioQueue = [];
       endOfStreamPending = false;
-      audioEnded = false;
       responseDone = false;
       audioReceived = false;
       audioBufferedBytes = 0;
@@ -253,98 +237,6 @@
         sourceBuffer.addEventListener('updateend', appendNextChunk);
         appendNextChunk();
       }, { once: true });
-    }
-
-    async function startBargeInMonitor() {
-      if (bargeRunning || isRecording) return;
-      try {
-        bargeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (err) {
-        log('barge-in: permiso de microfono denegado');
-        return;
-      }
-      bargeCtx = new (window.AudioContext || window.webkitAudioContext)();
-      bargeAnalyser = bargeCtx.createAnalyser();
-      bargeAnalyser.fftSize = 2048;
-      const src = bargeCtx.createMediaStreamSource(bargeStream);
-      src.connect(bargeAnalyser);
-      bargeRunning = true;
-      bargeHits = 0;
-      runBargeIn();
-    }
-
-    function stopBargeInMonitor() {
-      bargeRunning = false;
-      bargeHits = 0;
-      if (bargeStream) {
-        bargeStream.getTracks().forEach(t => t.stop());
-        bargeStream = null;
-      }
-      if (bargeCtx) {
-        bargeCtx.close().catch(() => {});
-        bargeCtx = null;
-        bargeAnalyser = null;
-      }
-    }
-
-    function detectVoice(currentAnalyser, currentCtx) {
-      if (!currentAnalyser || !currentCtx) return { rms: 0, hasVoice: false };
-      const data = new Uint8Array(currentAnalyser.fftSize);
-      currentAnalyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) {
-        const v = (data[i] - 128) / 128;
-        sum += v * v;
-      }
-      const rms = Math.sqrt(sum / data.length);
-      const freqData = new Float32Array(currentAnalyser.frequencyBinCount);
-      currentAnalyser.getFloatFrequencyData(freqData);
-      const nyquist = currentCtx.sampleRate / 2;
-      const binHz = nyquist / freqData.length;
-      let voiceEnergy = 0;
-      let totalEnergy = 0;
-      for (let i = 0; i < freqData.length; i++) {
-        const db = freqData[i];
-        if (db < VAD_MIN_ENERGY_DB) continue;
-        const hz = i * binHz;
-        const linear = Math.pow(10, db / 20);
-        totalEnergy += linear;
-        if (hz >= 85 && hz <= 3000) {
-          voiceEnergy += linear;
-        }
-      }
-      const ratio = totalEnergy > 0 ? voiceEnergy / totalEnergy : 0;
-      return { rms, hasVoice: ratio >= VAD_MIN_VOICE_RATIO };
-    }
-
-    function runBargeIn() {
-      if (!bargeRunning || !bargeAnalyser || !bargeCtx) return;
-      if (isSpeaking && playbackStartTs && (Date.now() - playbackStartTs) < BARGE_COOLDOWN_MS) {
-        requestAnimationFrame(runBargeIn);
-        return;
-      }
-      const { rms, hasVoice } = detectVoice(bargeAnalyser, bargeCtx);
-      if (rms > VAD_THRESHOLD && hasVoice) {
-        bargeHits += 1;
-      } else {
-        bargeHits = 0;
-      }
-      if (bargeHits >= VAD_BARGE_HITS) {
-        bargeHits = 0;
-        if (isSpeaking || !audioEnded) {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'interrupt' }));
-          }
-          stopPlayback();
-          if (!isRecording) {
-            startRecording(true);
-          }
-        } else if (!isRecording) {
-          startRecording(true);
-        }
-        return;
-      }
-      requestAnimationFrame(runBargeIn);
     }
 
     function stopPlayback() {
@@ -361,8 +253,6 @@
           mediaSource.endOfStream();
         } catch (_) {}
       }
-      stopBargeInMonitor();
-      if (autoMode && !isRecording) startBargeInMonitor();
     }
 
     function appendNextChunk() {
@@ -408,6 +298,120 @@
       }
     }
 
+    function downsampleBuffer(buffer, inputRate, outputRate) {
+      if (outputRate === inputRate) return buffer;
+      const ratio = inputRate / outputRate;
+      const newLength = Math.round(buffer.length / ratio);
+      const result = new Float32Array(newLength);
+      let offsetResult = 0;
+      let offsetBuffer = 0;
+      while (offsetResult < result.length) {
+        const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+        let accum = 0;
+        let count = 0;
+        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+          accum += buffer[i];
+          count += 1;
+        }
+        result[offsetResult] = count ? (accum / count) : 0;
+        offsetResult += 1;
+        offsetBuffer = nextOffsetBuffer;
+      }
+      return result;
+    }
+
+    function floatTo16BitPCM(float32Array) {
+      const len = float32Array.length;
+      const int16 = new Int16Array(len);
+      for (let i = 0; i < len; i++) {
+        let s = Math.max(-1, Math.min(1, float32Array[i]));
+        int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      return int16;
+    }
+
+    function encodePcmToBase64(int16Array) {
+      const bytes = new Uint8Array(int16Array.buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }
+
+    function sendPcmChunk(int16Array) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({
+        type: 'pcm_chunk',
+        sample_rate: TARGET_SAMPLE_RATE,
+        data: encodePcmToBase64(int16Array)
+      }));
+    }
+
+    async function startCapture() {
+      captureRequested = true;
+      if (captureRunning) return;
+      connectWs();
+      try {
+        captureStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+      } catch (err) {
+        setStatus('Permiso de microfono denegado', false);
+        return;
+      }
+
+      captureCtx = new (window.AudioContext || window.webkitAudioContext)();
+      captureSource = captureCtx.createMediaStreamSource(captureStream);
+      captureProcessor = captureCtx.createScriptProcessor(PROCESSOR_SIZE, 1, 1);
+      captureGain = captureCtx.createGain();
+      captureGain.gain.value = 0;
+
+      captureProcessor.onaudioprocess = (event) => {
+        if (!captureRunning) return;
+        const input = event.inputBuffer.getChannelData(0);
+        const downsampled = downsampleBuffer(input, captureCtx.sampleRate, TARGET_SAMPLE_RATE);
+        const pcm16 = floatTo16BitPCM(downsampled);
+        if (pcm16.length) sendPcmChunk(pcm16);
+      };
+
+      captureSource.connect(captureProcessor);
+      captureProcessor.connect(captureGain);
+      captureGain.connect(captureCtx.destination);
+
+      captureRunning = true;
+      setStatus('Escuchando...', true);
+    }
+
+    async function stopCapture(keepRequested = false) {
+      captureRunning = false;
+      if (!keepRequested) captureRequested = false;
+      if (captureProcessor) {
+        captureProcessor.disconnect();
+        captureProcessor = null;
+      }
+      if (captureSource) {
+        captureSource.disconnect();
+        captureSource = null;
+      }
+      if (captureGain) {
+        captureGain.disconnect();
+        captureGain = null;
+      }
+      if (captureStream) {
+        captureStream.getTracks().forEach(t => t.stop());
+        captureStream = null;
+      }
+      if (captureCtx) {
+        await captureCtx.close().catch(() => {});
+        captureCtx = null;
+      }
+      setStatus('Listo', false);
+    }
+
     function connectWs() {
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         return;
@@ -418,7 +422,7 @@
         setStatus('Conectado', false);
         ws.send(JSON.stringify({ type: 'config', thread_id: threadId }));
         log('ws open');
-        if (autoMode && !isRecording) startBargeInMonitor();
+        if (autoMode) startCapture();
       };
       ws.onclose = () => {
         setStatus('Desconectado', false);
@@ -429,7 +433,6 @@
         log('ws error');
       };
       ws.onmessage = (event) => {
-        // Avoid flooding the UI log with large audio payloads
         if (event.data && event.data.startsWith('{"type":"audio_chunk"')) {
           log('ws message: audio_chunk');
         } else {
@@ -438,22 +441,21 @@
         const msg = JSON.parse(event.data);
         if (msg.type === 'status') {
           setStatus(msg.value, msg.value === 'processing');
-          if (msg.value === 'processing') processing = true;
-          if (msg.value === 'done' || msg.value === 'error' || msg.value === 'interrupted') {
-            processing = false;
+          if (msg.value === 'processing') {
+            replyEl.textContent = '';
+            transcriptEl.textContent = '—';
+            resetAudioStream();
           }
           if (msg.value === 'done' && autoMode) {
             responseDone = true;
-            if (!audioReceived && !isRecording) {
-              startRecording(true);
-            }
           }
           if (msg.value === 'interrupted') {
             stopPlayback();
-            if (autoMode && !isRecording) {
-              startRecording(true);
-            }
           }
+        } else if (msg.type === 'speech_start') {
+          log('vad: speech_start');
+        } else if (msg.type === 'speech_end') {
+          log('vad: speech_end');
         } else if (msg.type === 'transcript') {
           transcriptEl.textContent = msg.text || '(sin transcripcion)';
         } else if (msg.type === 'text_delta') {
@@ -463,7 +465,6 @@
         } else if (msg.type === 'audio_chunk') {
           isSpeaking = true;
           audioReceived = true;
-          audioEnded = false;
           if (!mediaSource) resetAudioStream();
           pushAudioChunk(msg.data);
         } else if (msg.type === 'audio_end') {
@@ -480,146 +481,37 @@
       };
     }
 
-    async function startRecording(auto = false) {
-      connectWs();
-      replyEl.textContent = '';
-      transcriptEl.textContent = '—';
-      resetAudioStream();
-      stopBargeInMonitor();
-      if (
-        !auto &&
-        ws &&
-        ws.readyState === WebSocket.OPEN &&
-        (processing || isSpeaking || !audioEnded)
-      ) {
-        ws.send(JSON.stringify({ type: 'interrupt' }));
-        stopPlayback();
-      }
-
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (err) {
-        setStatus('Permiso de microfono denegado', false);
+    startBtn.addEventListener('click', startCapture);
+    stopBtn.addEventListener('click', () => {
+      const text = textInput.value.trim();
+      if (text && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'text', text }));
+        textInput.value = '';
         return;
       }
-
-      // VAD setup
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 2048;
-      const src = audioCtx.createMediaStreamSource(stream);
-      src.connect(analyser);
-      speechSeen = false;
-      lastVoiceTs = Date.now();
-      vadRunning = true;
-      runVad();
-
-      chunks = [];
-      recordedBytes = 0;
-      mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          chunks.push(e.data);
-          recordedBytes += e.data.size;
-        }
-      };
-      mediaRecorder.onstop = () => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          if (recordedBytes < MIN_RECORD_BYTES) {
-            log(`audio too short (${recordedBytes} bytes), retry`);
-            if (autoMode) {
-              setTimeout(() => {
-                if (!isRecording) startRecording(true);
-              }, 300);
-            }
-            return;
-          }
-          if (chunks.length > 0) {
-            const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
-            blob.arrayBuffer().then((buf) => {
-              const bytes = new Uint8Array(buf);
-              let binary = '';
-              for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-              ws.send(JSON.stringify({ type: 'audio', data: btoa(binary), mime: blob.type }));
-              ws.send(JSON.stringify({ type: 'end' }));
-            });
-          } else if (textInput.value.trim()) {
-            ws.send(JSON.stringify({ type: 'text', text: textInput.value.trim() }));
-            textInput.value = '';
-          } else {
-            setStatus('No hay audio ni texto', false);
-          }
-        }
-      };
-      mediaRecorder.start();
-      isRecording = true;
-      setStatus('Grabando...', true);
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
-    }
-
-    function runVad() {
-      if (!vadRunning || !analyser) return;
-      const { rms, hasVoice } = detectVoice(analyser, audioCtx);
-      const now = Date.now();
-      if (rms > VAD_THRESHOLD && hasVoice) {
-        speechSeen = true;
-        lastVoiceTs = now;
-      }
-      if (speechSeen && now - lastVoiceTs > VAD_SILENCE_MS) {
-        stopRecording();
-        return;
-      }
-      requestAnimationFrame(runVad);
-    }
-
-    function stopRecording() {
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-      }
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-      }
-      vadRunning = false;
-      if (audioCtx) {
-        audioCtx.close().catch(() => {});
-        audioCtx = null;
-      }
-      isRecording = false;
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      setStatus('Procesando...', false);
-      if (autoMode) startBargeInMonitor();
-
-      // Envio ocurre en onstop para asegurar que MediaRecorder ya genero datos
-    }
-
-    startBtn.addEventListener('click', startRecording);
-    stopBtn.addEventListener('click', stopRecording);
+      stopCapture();
+    });
     autoBtn.addEventListener('click', () => {
       autoMode = !autoMode;
       autoBtn.textContent = autoMode ? 'Continuo: ON' : 'Continuo: OFF';
-      if (autoMode && !isRecording) {
-        startBargeInMonitor();
+      if (autoMode) {
+        startCapture();
       } else {
-        stopBargeInMonitor();
+        stopCapture();
       }
     });
     copyStateBtn.addEventListener('click', copyState);
     audioEl.addEventListener('play', () => {
       isSpeaking = true;
-      audioEnded = false;
-      playbackStartTs = Date.now();
-      startBargeInMonitor();
+      if (captureRunning) stopCapture(true);
     });
     audioEl.addEventListener('pause', () => {
-      stopBargeInMonitor();
+      isSpeaking = false;
+      if (autoMode && captureRequested && !captureRunning) startCapture();
     });
     audioEl.addEventListener('ended', () => {
       isSpeaking = false;
-      audioEnded = true;
-      stopBargeInMonitor();
-      if (autoMode && responseDone && !isRecording) startRecording(true);
+      if (autoMode && captureRequested && !captureRunning) startCapture();
     });
     autoBtn.textContent = autoMode ? 'Continuo: ON' : 'Continuo: OFF';
     connectWs();
