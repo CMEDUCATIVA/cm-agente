@@ -579,6 +579,8 @@ async def voice_ws(ws: WebSocket) -> None:
             current_task.cancel()
             try:
                 await current_task
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
         current_task = None
@@ -589,8 +591,11 @@ async def voice_ws(ws: WebSocket) -> None:
         await ws.send_json({"type": "status", "value": "processing"})
 
         transcript = None
-        if audio_bytes:
-            transcript = await _transcribe_audio(audio_bytes, content_type)
+        try:
+            if audio_bytes:
+                transcript = await _transcribe_audio(audio_bytes, content_type)
+        except asyncio.CancelledError:
+            return
 
         message = transcript or (text or "").strip()
         if not message:
