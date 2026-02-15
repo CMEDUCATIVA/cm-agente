@@ -6,18 +6,20 @@ FROM python:3.12.3-slim
 WORKDIR /app
 
 COPY pyproject.toml .
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir -e .
-
-# Plotly (para gráficos en chat) y Kaleido (PNG opcional)
-RUN pip install --no-cache-dir plotly kaleido
-
+COPY README.md .
+COPY LICENSE .
 COPY src/agents/ ./agents/
 COPY src/core/ ./core/
 COPY src/memory/ ./memory/
 COPY src/schema/ ./schema/
 COPY src/service/ ./service/
 COPY src/voice/ ./voice/
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -e .
+
+# Plotly (para gráficos en chat) y Kaleido (PNG opcional)
+RUN pip install --no-cache-dir plotly kaleido
+
 COPY media/ ./media/
 COPY web/ ./web/
 COPY src/run_service.py .
