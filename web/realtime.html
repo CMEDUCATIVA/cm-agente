@@ -228,11 +228,13 @@
           return;
         }
 
+        const voice = voiceSelect ? voiceSelect.value : '';
+        log(`Voz seleccionada: ${voice || '(default)'}`);
         log('Enviando /realtime/session...');
         let res;
-        const voice = voiceSelect ? voiceSelect.value : '';
         try {
           const url = voice ? `/realtime/session?voice=${encodeURIComponent(voice)}` : '/realtime/session';
+          log(`URL: ${url}`);
           res = await fetch(url, {
             method: 'POST',
             headers: { 'content-type': 'application/sdp' },
