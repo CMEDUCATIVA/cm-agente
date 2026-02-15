@@ -181,7 +181,7 @@
     let sourceBuffer;
     let endOfStreamPending = false;
     const logLines = [];
-    let autoMode = false;
+    let autoMode = true;
     const threadId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
     let audioCtx;
     let analyser;
@@ -352,6 +352,7 @@
         } catch (_) {}
       }
       stopBargeInMonitor();
+      if (autoMode && !isRecording) startBargeInMonitor();
     }
 
     function appendNextChunk() {
@@ -407,6 +408,7 @@
         setStatus('Conectado', false);
         ws.send(JSON.stringify({ type: 'config', thread_id: threadId }));
         log('ws open');
+        if (autoMode && !isRecording) startBargeInMonitor();
       };
       ws.onclose = () => {
         setStatus('Desconectado', false);
@@ -577,6 +579,7 @@
       startBtn.disabled = false;
       stopBtn.disabled = true;
       setStatus('Procesando...', false);
+      if (autoMode) startBargeInMonitor();
 
       // Envio ocurre en onstop para asegurar que MediaRecorder ya genero datos
     }
@@ -586,7 +589,11 @@
     autoBtn.addEventListener('click', () => {
       autoMode = !autoMode;
       autoBtn.textContent = autoMode ? 'Continuo: ON' : 'Continuo: OFF';
-      if (autoMode && !isRecording) startRecording();
+      if (autoMode && !isRecording) {
+        startBargeInMonitor();
+      } else {
+        stopBargeInMonitor();
+      }
     });
     copyStateBtn.addEventListener('click', copyState);
     audioEl.addEventListener('play', () => {
@@ -603,6 +610,7 @@
       stopBargeInMonitor();
       if (autoMode && responseDone && !isRecording) startRecording(true);
     });
+    autoBtn.textContent = autoMode ? 'Continuo: ON' : 'Continuo: OFF';
     connectWs();
   </script>
 </body>
