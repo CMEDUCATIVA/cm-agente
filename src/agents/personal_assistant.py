@@ -35,8 +35,12 @@ async def personal_assistant(
         messages = previous["messages"] + messages
     messages = messages[-MAX_HISTORY_MESSAGES:]
 
+    extra = config["configurable"].get("instructions")
+    system_text = INSTRUCTIONS
+    if extra:
+        system_text = f"{INSTRUCTIONS}\n\n<instrucciones_usuario>\n{extra}\n</instrucciones_usuario>"
     model = get_model(config["configurable"].get("model", settings.DEFAULT_MODEL))
-    response = await model.ainvoke([SystemMessage(content=INSTRUCTIONS)] + messages)
+    response = await model.ainvoke([SystemMessage(content=system_text)] + messages)
     return entrypoint.final(
         value={"messages": [response]}, save={"messages": messages + [response]}
     )
