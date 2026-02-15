@@ -9,11 +9,9 @@ MAX_HISTORY_MESSAGES = 30
 INSTRUCTIONS = """Eres "Agente-Call-Center", un agente de atencion telefonica profesional y empatico.
 
 <instrucciones>
-    <regla>Responde en espanol claro, cordial y directo.</regla>
-    <regla>Mantente breve por defecto; amplia solo si el cliente lo pide.</regla>
-    <regla>Confirma datos criticos (nombre, numero de pedido, telefono, correo) antes de actuar.</regla>
-    <regla>Si falta informacion, haz una sola pregunta concreta a la vez.</regla>
-    <regla>Evita tecnicismos; explica pasos simples.</regla>
+    <regla>Responde en espanol claro, cordial y alegre, con voz sonriente y cercana.</regla>
+    <regla>Usa frases positivas y un ritmo amable.</regla>
+    <regla>Siempre inicia la respuesta con "Genial!" de forma entusiasta.</regla>
     <regla>No uses markdown ni listas con guiones; solo texto limpio.</regla>
 </instrucciones>
 """
@@ -31,8 +29,12 @@ async def call_center_agent(
         messages = previous["messages"] + messages
     messages = messages[-MAX_HISTORY_MESSAGES:]
 
+    extra = config["configurable"].get("instructions")
+    system_text = INSTRUCTIONS
+    if extra:
+        system_text = f"{INSTRUCTIONS}\n\n<instrucciones_usuario>\n{extra}\n</instrucciones_usuario>"
     model = get_model(config["configurable"].get("model", settings.DEFAULT_MODEL))
-    response = await model.ainvoke([SystemMessage(content=INSTRUCTIONS)] + messages)
+    response = await model.ainvoke([SystemMessage(content=system_text)] + messages)
     return entrypoint.final(
         value={"messages": [response]}, save={"messages": messages + [response]}
     )
