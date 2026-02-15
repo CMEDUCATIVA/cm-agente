@@ -188,10 +188,16 @@
     let vadRunning = false;
     let speechSeen = false;
     let lastVoiceTs = 0;
+    let bargeStream;
+    let bargeCtx;
+    let bargeAnalyser;
+    let bargeRunning = false;
+    let bargeHits = 0;
     const VAD_THRESHOLD = 0.02;
     const VAD_SILENCE_MS = 900;
     const VAD_MIN_VOICE_RATIO = 0.18;
     const VAD_MIN_ENERGY_DB = -55;
+    const VAD_BARGE_HITS = 2;
     let processing = false;
     let isSpeaking = false;
     let audioEnded = true;
@@ -247,6 +253,90 @@
       }, { once: true });
     }
 
+    async function startBargeInMonitor() {
+      if (bargeRunning || isRecording) return;
+      try {
+        bargeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        log('barge-in: permiso de microfono denegado');
+        return;
+      }
+      bargeCtx = new (window.AudioContext || window.webkitAudioContext)();
+      bargeAnalyser = bargeCtx.createAnalyser();
+      bargeAnalyser.fftSize = 2048;
+      const src = bargeCtx.createMediaStreamSource(bargeStream);
+      src.connect(bargeAnalyser);
+      bargeRunning = true;
+      bargeHits = 0;
+      runBargeIn();
+    }
+
+    function stopBargeInMonitor() {
+      bargeRunning = false;
+      bargeHits = 0;
+      if (bargeStream) {
+        bargeStream.getTracks().forEach(t => t.stop());
+        bargeStream = null;
+      }
+      if (bargeCtx) {
+        bargeCtx.close().catch(() => {});
+        bargeCtx = null;
+        bargeAnalyser = null;
+      }
+    }
+
+    function detectVoice(currentAnalyser, currentCtx) {
+      if (!currentAnalyser || !currentCtx) return { rms: 0, hasVoice: false };
+      const data = new Uint8Array(currentAnalyser.fftSize);
+      currentAnalyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      const freqData = new Float32Array(currentAnalyser.frequencyBinCount);
+      currentAnalyser.getFloatFrequencyData(freqData);
+      const nyquist = currentCtx.sampleRate / 2;
+      const binHz = nyquist / freqData.length;
+      let voiceEnergy = 0;
+      let totalEnergy = 0;
+      for (let i = 0; i < freqData.length; i++) {
+        const db = freqData[i];
+        if (db < VAD_MIN_ENERGY_DB) continue;
+        const hz = i * binHz;
+        const linear = Math.pow(10, db / 20);
+        totalEnergy += linear;
+        if (hz >= 85 && hz <= 3000) {
+          voiceEnergy += linear;
+        }
+      }
+      const ratio = totalEnergy > 0 ? voiceEnergy / totalEnergy : 0;
+      return { rms, hasVoice: ratio >= VAD_MIN_VOICE_RATIO };
+    }
+
+    function runBargeIn() {
+      if (!bargeRunning || !bargeAnalyser || !bargeCtx) return;
+      const { rms, hasVoice } = detectVoice(bargeAnalyser, bargeCtx);
+      if (rms > VAD_THRESHOLD && hasVoice) {
+        bargeHits += 1;
+      } else {
+        bargeHits = 0;
+      }
+      if (bargeHits >= VAD_BARGE_HITS) {
+        bargeHits = 0;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'interrupt' }));
+        }
+        stopPlayback();
+        if (!isRecording) {
+          startRecording(true);
+        }
+        return;
+      }
+      requestAnimationFrame(runBargeIn);
+    }
+
     function stopPlayback() {
       try {
         audioEl.pause();
@@ -261,6 +351,7 @@
           mediaSource.endOfStream();
         } catch (_) {}
       }
+      stopBargeInMonitor();
     }
 
     function appendNextChunk() {
@@ -382,7 +473,13 @@
       replyEl.textContent = '';
       transcriptEl.textContent = '—';
       resetAudioStream();
-      if (!auto && (processing || isSpeaking) && ws && ws.readyState === WebSocket.OPEN) {
+      stopBargeInMonitor();
+      if (
+        !auto &&
+        ws &&
+        ws.readyState === WebSocket.OPEN &&
+        (processing || isSpeaking || !audioEnded)
+      ) {
         ws.send(JSON.stringify({ type: 'interrupt' }));
         stopPlayback();
       }
@@ -451,35 +548,7 @@
 
     function runVad() {
       if (!vadRunning || !analyser) return;
-      const data = new Uint8Array(analyser.fftSize);
-      analyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) {
-        const v = (data[i] - 128) / 128;
-        sum += v * v;
-      }
-      const rms = Math.sqrt(sum / data.length);
-      let hasVoice = false;
-      if (audioCtx) {
-        const freqData = new Float32Array(analyser.frequencyBinCount);
-        analyser.getFloatFrequencyData(freqData);
-        const nyquist = audioCtx.sampleRate / 2;
-        const binHz = nyquist / freqData.length;
-        let voiceEnergy = 0;
-        let totalEnergy = 0;
-        for (let i = 0; i < freqData.length; i++) {
-          const db = freqData[i];
-          if (db < VAD_MIN_ENERGY_DB) continue;
-          const hz = i * binHz;
-          const linear = Math.pow(10, db / 20);
-          totalEnergy += linear;
-          if (hz >= 85 && hz <= 3000) {
-            voiceEnergy += linear;
-          }
-        }
-        const ratio = totalEnergy > 0 ? voiceEnergy / totalEnergy : 0;
-        hasVoice = ratio >= VAD_MIN_VOICE_RATIO;
-      }
+      const { rms, hasVoice } = detectVoice(analyser, audioCtx);
       const now = Date.now();
       if (rms > VAD_THRESHOLD && hasVoice) {
         speechSeen = true;
@@ -523,10 +592,15 @@
     audioEl.addEventListener('play', () => {
       isSpeaking = true;
       audioEnded = false;
+      startBargeInMonitor();
+    });
+    audioEl.addEventListener('pause', () => {
+      stopBargeInMonitor();
     });
     audioEl.addEventListener('ended', () => {
       isSpeaking = false;
       audioEnded = true;
+      stopBargeInMonitor();
       if (autoMode && responseDone && !isRecording) startRecording(true);
     });
     connectWs();
