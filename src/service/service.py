@@ -67,6 +67,7 @@ from voice import SpeechToText, TextToSpeech
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = BASE_DIR.parent
 
 try:
     import torch
@@ -974,6 +975,8 @@ async def health_check():
 app.include_router(router)
 
 web_dir = BASE_DIR / "web"
+if not web_dir.exists():
+    web_dir = REPO_ROOT / "web"
 if web_dir.exists():
     app.mount("/web", StaticFiles(directory=str(web_dir), html=True), name="web")
 
