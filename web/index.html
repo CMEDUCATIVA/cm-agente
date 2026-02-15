@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CM-Agente Voz</title>
+  <title>CM-Agente Realtime</title>
   <style>
     :root {
       --bg: #f6f2ed;
@@ -47,6 +47,7 @@
       display: flex;
       gap: 12px;
       flex-wrap: wrap;
+      align-items: center;
       margin-bottom: 18px;
     }
     button {
@@ -61,13 +62,8 @@
       transition: transform 0.08s ease, box-shadow 0.2s ease;
       box-shadow: 0 6px 18px var(--ring);
     }
-    button.secondary {
-      background: #111;
-    }
-    button:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-    }
+    button.secondary { background: #111; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
     button:active { transform: translateY(1px); }
     .status {
       display: inline-flex;
@@ -86,20 +82,6 @@
       background: #bbb;
     }
     .dot.live { background: var(--accent); box-shadow: 0 0 0 6px var(--ring); }
-    .row {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 14px;
-    }
-    textarea {
-      width: 100%;
-      min-height: 80px;
-      border-radius: 12px;
-      border: 1px solid #ddd;
-      padding: 12px;
-      font-size: 14px;
-      resize: vertical;
-    }
     .panel {
       background: #fafafa;
       border: 1px dashed #e0e0e0;
@@ -110,149 +92,135 @@
     .label { font-weight: 600; margin-bottom: 6px; }
     audio { width: 100%; margin-top: 8px; }
     .hint { font-size: 12px; color: var(--muted); }
-    .log-box {
-      max-height: 220px;
-      overflow-y: auto;
-      white-space: pre-wrap;
-      font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
-      background: #f7f3ef;
-      border-radius: 8px;
-      padding: 8px;
-    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>Conversacion por Voz (Realtime)</h1>
-      <p class="sub">WebSocket realtime. Habla y recibe audio en streaming. Se corta la respuesta si vuelves a hablar.</p>
+      <h1>Conversacion Realtime</h1>
+      <p class="sub">WebRTC full-duplex con barge-in basico. Abre microfono y puedes interrumpir.</p>
 
       <div class="controls">
-        <button id="startBtn">Hablar</button>
-        <button id="stopBtn" class="secondary" disabled>Enviar</button>
-        <button id="autoBtn" class="secondary">Continuo: OFF</button>
-        <button id="copyStateBtn" class="secondary">Copiar Estado</button>
-        <span class="status"><span id="dot" class="dot"></span><span id="statusText">Listo</span></span>
+        <button id="connectBtn">Conectar</button>
+        <button id="talkBtn" class="secondary" disabled>Hablar (mute)</button>
+        <button id="interruptBtn" disabled>Interrumpir</button>
+        <label class="hint" style="display:flex;align-items:center;gap:6px;">
+          Voz:
+          <select id="voiceSelect">
+            <option value="alloy">alloy</option>
+            <option value="shimmer">shimmer</option>
+            <option value="coral">coral</option>
+            <option value="verse">verse</option>
+            <option value="sage">sage</option>
+            <option value="echo">echo</option>
+            <option value="ash">ash</option>
+            <option value="ballad">ballad</option>
+            <option value="marin">marin</option>
+            <option value="cedar">cedar</option>
+          </select>
+        </label>
+        <span class="status"><span id="dot" class="dot"></span><span id="statusText">Desconectado</span></span>
       </div>
 
-      <div class="row">
-        <div>
-          <div class="label">Texto (opcional)</div>
-          <textarea id="textInput" placeholder="Escribe si no quieres usar audio..."></textarea>
-          <div class="hint">Si grabas audio, el texto se ignora.</div>
-        </div>
-        <div class="panel">
-          <div class="label">Estado</div>
-          <div id="log" class="log-box">—</div>
-        </div>
-        <div class="panel">
-          <div class="label">Transcripcion</div>
-          <div id="transcript">�</div>
-        </div>
-        <div class="panel">
-          <div class="label">Respuesta</div>
-          <div id="reply">�</div>
-          <audio id="audio" controls></audio>
+      <div class="panel">
+        <div class="label">Estado</div>
+        <div id="log">—</div>
+        <div class="hint">Requiere HTTPS o localhost para el microfono.</div>
+      </div>
+
+      <div class="panel">
+        <div class="label">Transcripcion</div>
+        <div id="transcript">—</div>
+      </div>
+
+      <div class="panel">
+        <div class="label">Respuesta</div>
+        <div id="reply">—</div>
+        <audio id="remoteAudio" controls></audio>
+      </div>
+
+      <div class="panel">
+        <div class="label">Instrucciones (estilo de habla)</div>
+        <div class="hint">Se aplican al crear la sesiÃ³n. Cambia y reconecta.</div>
+        <div style="display:grid;gap:8px;margin-top:8px;">
+          <textarea id="seqStep1" placeholder="Secuencia Paso 1: ..."></textarea>
+          <textarea id="seqStep2" placeholder="Secuencia Paso 2: ..."></textarea>
+          <textarea id="seqStep3" placeholder="Secuencia Paso 3: ..."></textarea>
+          <textarea id="seqStep4" placeholder="Secuencia Paso 4 (opcional): ..."></textarea>
+          <textarea id="seqStep5" placeholder="Secuencia Paso 5 (opcional): ..."></textarea>
+          <textarea id="instBase" placeholder="Base: rol, idioma, tono general"></textarea>
+          <textarea id="instStyle" placeholder="Estilo: longitud, ritmo, tecnicismos, formato"></textarea>
+          <textarea id="instRules" placeholder="Reglas: lo que nunca debe hacer"></textarea>
+          <textarea id="instSpecial" placeholder="EspecializaciÃ³n: contexto de negocio/producto"></textarea>
+          <textarea id="instExtra" placeholder="Extra: saludo fijo, cierre fijo, palabras prohibidas"></textarea>
         </div>
       </div>
+
     </div>
   </div>
 
-    <script>
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const autoBtn = document.getElementById('autoBtn');
-    const copyStateBtn = document.getElementById('copyStateBtn');
+  <script>
+    const connectBtn = document.getElementById('connectBtn');
+    const talkBtn = document.getElementById('talkBtn');
+    const interruptBtn = document.getElementById('interruptBtn');
     const statusText = document.getElementById('statusText');
     const dot = document.getElementById('dot');
-    const transcriptEl = document.getElementById('transcript');
-    const replyEl = document.getElementById('reply');
-    const audioEl = document.getElementById('audio');
-    const textInput = document.getElementById('textInput');
     const logEl = document.getElementById('log');
+    const transcriptEl = document.getElementById('transcript');
+    const remoteAudio = document.getElementById('remoteAudio');
+    const replyEl = document.getElementById('reply');
+    const voiceSelect = document.getElementById('voiceSelect');
+    const seqStep1 = document.getElementById('seqStep1');
+    const seqStep2 = document.getElementById('seqStep2');
+    const seqStep3 = document.getElementById('seqStep3');
+    const seqStep4 = document.getElementById('seqStep4');
+    const seqStep5 = document.getElementById('seqStep5');
+    const instBase = document.getElementById('instBase');
+    const instStyle = document.getElementById('instStyle');
+    const instRules = document.getElementById('instRules');
+    const instSpecial = document.getElementById('instSpecial');
+    const instExtra = document.getElementById('instExtra');
+    const STORAGE_KEY = 'cm_realtime_instructions_v1';
 
+    let pc;
+    let dc;
+    let localStream;
+    let micTrack;
     let ws;
+
     let audioQueue = [];
     let mediaSource;
     let sourceBuffer;
     let endOfStreamPending = false;
-    const logLines = [];
-    let autoMode = true;
-    const threadId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-    let isSpeaking = false;
-    let responseDone = false;
-    let audioReceived = false;
     let audioBufferedBytes = 0;
     let playbackStarted = false;
     const MIN_PLAY_BYTES = 10000;
     const MIN_APPEND_BYTES = 6000;
 
-    let captureCtx;
-    let captureStream;
-    let captureSource;
-    let captureProcessor;
-    let captureGain;
-    let captureRunning = false;
-    let captureRequested = false;
-    const TARGET_SAMPLE_RATE = 16000;
-    const PROCESSOR_SIZE = 4096;
-
     function setStatus(text, live=false) {
       statusText.textContent = text;
       dot.classList.toggle('live', live);
-      log(`status: ${text}`);
     }
 
+    const logLines = [];
     function log(msg) {
       logLines.push(msg);
+      if (logLines.length > 8) logLines.shift();
       logEl.textContent = logLines.join('\n');
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-
-    async function copyState() {
-      const stateText = logLines.join('\n');
-      if (!stateText.trim()) {
-        log('estado vacio: nada para copiar');
-        return;
-      }
-      try {
-        await navigator.clipboard.writeText(stateText);
-        log('estado copiado al portapapeles');
-      } catch (err) {
-        log('no se pudo copiar el estado');
-      }
     }
 
     function resetAudioStream() {
       audioQueue = [];
       endOfStreamPending = false;
-      responseDone = false;
-      audioReceived = false;
       audioBufferedBytes = 0;
       playbackStarted = false;
       mediaSource = new MediaSource();
-      audioEl.src = URL.createObjectURL(mediaSource);
+      remoteAudio.src = URL.createObjectURL(mediaSource);
       mediaSource.addEventListener('sourceopen', () => {
         sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
         sourceBuffer.addEventListener('updateend', appendNextChunk);
         appendNextChunk();
       }, { once: true });
-    }
-
-    function stopPlayback() {
-      try {
-        audioEl.pause();
-        audioEl.currentTime = 0;
-      } catch (_) {}
-      audioQueue = [];
-      endOfStreamPending = false;
-      audioBufferedBytes = 0;
-      playbackStarted = false;
-      if (mediaSource && mediaSource.readyState === 'open') {
-        try {
-          mediaSource.endOfStream();
-        } catch (_) {}
-      }
     }
 
     function appendNextChunk() {
@@ -278,8 +246,6 @@
         }
       } else if (endOfStreamPending && mediaSource.readyState === 'open') {
         mediaSource.endOfStream();
-      } else if (playbackStarted && audioEl.paused) {
-        audioEl.play().catch(() => {});
       }
     }
 
@@ -294,122 +260,8 @@
       appendNextChunk();
       if (!playbackStarted && audioBufferedBytes >= MIN_PLAY_BYTES) {
         playbackStarted = true;
-        audioEl.play().catch(() => {});
+        remoteAudio.play().catch(() => {});
       }
-    }
-
-    function downsampleBuffer(buffer, inputRate, outputRate) {
-      if (outputRate === inputRate) return buffer;
-      const ratio = inputRate / outputRate;
-      const newLength = Math.round(buffer.length / ratio);
-      const result = new Float32Array(newLength);
-      let offsetResult = 0;
-      let offsetBuffer = 0;
-      while (offsetResult < result.length) {
-        const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
-        let accum = 0;
-        let count = 0;
-        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-          accum += buffer[i];
-          count += 1;
-        }
-        result[offsetResult] = count ? (accum / count) : 0;
-        offsetResult += 1;
-        offsetBuffer = nextOffsetBuffer;
-      }
-      return result;
-    }
-
-    function floatTo16BitPCM(float32Array) {
-      const len = float32Array.length;
-      const int16 = new Int16Array(len);
-      for (let i = 0; i < len; i++) {
-        let s = Math.max(-1, Math.min(1, float32Array[i]));
-        int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
-      return int16;
-    }
-
-    function encodePcmToBase64(int16Array) {
-      const bytes = new Uint8Array(int16Array.buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      return btoa(binary);
-    }
-
-    function sendPcmChunk(int16Array) {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      ws.send(JSON.stringify({
-        type: 'pcm_chunk',
-        sample_rate: TARGET_SAMPLE_RATE,
-        data: encodePcmToBase64(int16Array)
-      }));
-    }
-
-    async function startCapture() {
-      captureRequested = true;
-      if (captureRunning) return;
-      connectWs();
-      try {
-        captureStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
-        });
-      } catch (err) {
-        setStatus('Permiso de microfono denegado', false);
-        return;
-      }
-
-      captureCtx = new (window.AudioContext || window.webkitAudioContext)();
-      captureSource = captureCtx.createMediaStreamSource(captureStream);
-      captureProcessor = captureCtx.createScriptProcessor(PROCESSOR_SIZE, 1, 1);
-      captureGain = captureCtx.createGain();
-      captureGain.gain.value = 0;
-
-      captureProcessor.onaudioprocess = (event) => {
-        if (!captureRunning) return;
-        const input = event.inputBuffer.getChannelData(0);
-        const downsampled = downsampleBuffer(input, captureCtx.sampleRate, TARGET_SAMPLE_RATE);
-        const pcm16 = floatTo16BitPCM(downsampled);
-        if (pcm16.length) sendPcmChunk(pcm16);
-      };
-
-      captureSource.connect(captureProcessor);
-      captureProcessor.connect(captureGain);
-      captureGain.connect(captureCtx.destination);
-
-      captureRunning = true;
-      setStatus('Escuchando...', true);
-    }
-
-    async function stopCapture(keepRequested = false) {
-      captureRunning = false;
-      if (!keepRequested) captureRequested = false;
-      if (captureProcessor) {
-        captureProcessor.disconnect();
-        captureProcessor = null;
-      }
-      if (captureSource) {
-        captureSource.disconnect();
-        captureSource = null;
-      }
-      if (captureGain) {
-        captureGain.disconnect();
-        captureGain = null;
-      }
-      if (captureStream) {
-        captureStream.getTracks().forEach(t => t.stop());
-        captureStream = null;
-      }
-      if (captureCtx) {
-        await captureCtx.close().catch(() => {});
-        captureCtx = null;
-      }
-      setStatus('Listo', false);
     }
 
     function connectWs() {
@@ -419,105 +271,272 @@
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${proto}://${location.host}/voice/ws`);
       ws.onopen = () => {
-        setStatus('Conectado', false);
-        ws.send(JSON.stringify({ type: 'config', thread_id: threadId }));
-        log('ws open');
-        if (autoMode) startCapture();
+        log('WS LLM/TTS conectado');
+        ws.send(JSON.stringify({ type: 'config' }));
       };
-      ws.onclose = () => {
-        setStatus('Desconectado', false);
-        log('ws close');
-      };
-      ws.onerror = () => {
-        setStatus('Error WS', false);
-        log('ws error');
-      };
+      ws.onclose = () => log('WS LLM/TTS cerrado');
+      ws.onerror = () => log('WS LLM/TTS error');
       ws.onmessage = (event) => {
-        if (event.data && event.data.startsWith('{"type":"audio_chunk"')) {
-          log('ws message: audio_chunk');
-        } else {
-          log(`ws message: ${event.data.slice(0, 120)}`);
-        }
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'status') {
-          setStatus(msg.value, msg.value === 'processing');
-          if (msg.value === 'processing') {
-            replyEl.textContent = '';
-            transcriptEl.textContent = '—';
-            resetAudioStream();
-            log('flujo: silero_vad -> stt -> llm -> tts');
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'text_delta') {
+            if (replyEl) replyEl.textContent += msg.text || '';
+          } else if (msg.type === 'final_text') {
+            if (replyEl) replyEl.textContent = msg.text || replyEl.textContent;
+          } else if (msg.type === 'audio_chunk') {
+            if (!mediaSource) resetAudioStream();
+            pushAudioChunk(msg.data);
+          } else if (msg.type === 'audio_end') {
+            endOfStreamPending = true;
+            appendNextChunk();
+            if (!playbackStarted) {
+              playbackStarted = true;
+              remoteAudio.play().catch(() => {});
+            }
+          } else if (msg.type === 'error') {
+            log(`LLM/TTS error: ${msg.message || 'error'}`);
           }
-          if (msg.value === 'done' && autoMode) {
-            responseDone = true;
-          }
-          if (msg.value === 'interrupted') {
-            stopPlayback();
-          }
-        } else if (msg.type === 'speech_start') {
-          log('silero_vad: speech_start');
-          log('vad: speech_start');
-        } else if (msg.type === 'speech_end') {
-          log('silero_vad: speech_end');
-          log('vad: speech_end');
-        } else if (msg.type === 'transcript') {
-          transcriptEl.textContent = msg.text || '(sin transcripcion)';
-        } else if (msg.type === 'text_delta') {
-          replyEl.textContent += msg.text;
-        } else if (msg.type === 'final_text') {
-          replyEl.textContent = msg.text || replyEl.textContent;
-        } else if (msg.type === 'audio_chunk') {
-          isSpeaking = true;
-          audioReceived = true;
-          if (!mediaSource) resetAudioStream();
-          pushAudioChunk(msg.data);
-        } else if (msg.type === 'audio_end') {
-          endOfStreamPending = true;
-          appendNextChunk();
-          if (!playbackStarted) {
-            playbackStarted = true;
-            audioEl.play().catch(() => {});
-          }
-        } else if (msg.type === 'error') {
-          setStatus('Error', false);
-          replyEl.textContent = msg.message || 'Error';
-        }
+        } catch {}
       };
     }
 
-    startBtn.addEventListener('click', startCapture);
-    stopBtn.addEventListener('click', () => {
-      const text = textInput.value.trim();
-      if (text && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'text', text }));
-        textInput.value = '';
-        return;
+    function loadInstructions() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (data.voice && voiceSelect) voiceSelect.value = data.voice;
+        if (data.seq1 && seqStep1) seqStep1.value = data.seq1;
+        if (data.seq2 && seqStep2) seqStep2.value = data.seq2;
+        if (data.seq3 && seqStep3) seqStep3.value = data.seq3;
+        if (data.seq4 && seqStep4) seqStep4.value = data.seq4;
+        if (data.seq5 && seqStep5) seqStep5.value = data.seq5;
+        if (data.base && instBase) instBase.value = data.base;
+        if (data.style && instStyle) instStyle.value = data.style;
+        if (data.rules && instRules) instRules.value = data.rules;
+        if (data.special && instSpecial) instSpecial.value = data.special;
+        if (data.extra && instExtra) instExtra.value = data.extra;
+        log('Instrucciones cargadas desde el navegador');
+      } catch {
+        // ignore
       }
-      stopCapture();
-    });
-    autoBtn.addEventListener('click', () => {
-      autoMode = !autoMode;
-      autoBtn.textContent = autoMode ? 'Continuo: ON' : 'Continuo: OFF';
-      if (autoMode) {
-        startCapture();
-      } else {
-        stopCapture();
+    }
+
+    function saveInstructions() {
+      try {
+        const data = {
+          voice: voiceSelect ? voiceSelect.value : '',
+          seq1: seqStep1 ? seqStep1.value : '',
+          seq2: seqStep2 ? seqStep2.value : '',
+          seq3: seqStep3 ? seqStep3.value : '',
+          seq4: seqStep4 ? seqStep4.value : '',
+          seq5: seqStep5 ? seqStep5.value : '',
+          base: instBase ? instBase.value : '',
+          style: instStyle ? instStyle.value : '',
+          rules: instRules ? instRules.value : '',
+          special: instSpecial ? instSpecial.value : '',
+          extra: instExtra ? instExtra.value : '',
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch {
+        // ignore
       }
-    });
-    copyStateBtn.addEventListener('click', copyState);
-    audioEl.addEventListener('play', () => {
-      isSpeaking = true;
-      if (captureRunning) stopCapture(true);
-    });
-    audioEl.addEventListener('pause', () => {
-      isSpeaking = false;
-      if (autoMode && captureRequested && !captureRunning) startCapture();
-    });
-    audioEl.addEventListener('ended', () => {
-      isSpeaking = false;
-      if (autoMode && captureRequested && !captureRunning) startCapture();
-    });
-    autoBtn.textContent = autoMode ? 'Continuo: ON' : 'Continuo: OFF';
-    connectWs();
+    }
+
+    function buildInstructions() {
+      const parts = [];
+      const push = (label, value) => {
+        const v = (value || '').trim();
+        if (v) parts.push(`${label}:\n${v}`);
+      };
+      const seqParts = [];
+      if (seqStep1 && seqStep1.value.trim()) seqParts.push(`1) ${seqStep1.value.trim()}`);
+      if (seqStep2 && seqStep2.value.trim()) seqParts.push(`2) ${seqStep2.value.trim()}`);
+      if (seqStep3 && seqStep3.value.trim()) seqParts.push(`3) ${seqStep3.value.trim()}`);
+      if (seqStep4 && seqStep4.value.trim()) seqParts.push(`4) ${seqStep4.value.trim()}`);
+      if (seqStep5 && seqStep5.value.trim()) seqParts.push(`5) ${seqStep5.value.trim()}`);
+      if (seqParts.length) {
+        push('Secuencia obligatoria', seqParts.join('\n'));
+      }
+      push('Base', instBase && instBase.value);
+      push('Estilo', instStyle && instStyle.value);
+      push('Reglas', instRules && instRules.value);
+      push('EspecializaciÃ³n', instSpecial && instSpecial.value);
+      push('Extra', instExtra && instExtra.value);
+      return parts.join('\n\n');
+    }
+
+    async function connect() {
+      connectBtn.disabled = true;
+      setStatus('Conectando...', true);
+      log('Iniciando WebRTC...');
+      try {
+        connectWs();
+        pc = new RTCPeerConnection();
+        pc.onicegatheringstatechange = () => {
+          log(`ICE state: ${pc.iceGatheringState}`);
+        };
+        pc.onconnectionstatechange = () => {
+          log(`RTC state: ${pc.connectionState}`);
+        };
+        dc = pc.createDataChannel('oai-events');
+        dc.onopen = () => log('DataChannel listo');
+        dc.onmessage = (e) => {
+          try {
+            const evt = JSON.parse(e.data);
+            if (evt.type === 'response.audio.delta') {
+              // Audio llega por la pista remota, solo log ligero
+            } else if (evt.type === 'conversation.item.input_audio_transcription.completed') {
+              const text = evt.transcript || '';
+              if (text && transcriptEl) transcriptEl.textContent = text;
+              if (text && ws && ws.readyState === WebSocket.OPEN) {
+                if (replyEl) replyEl.textContent = '';
+                resetAudioStream();
+                ws.send(JSON.stringify({ type: 'text', text }));
+              }
+            }
+          } catch {}
+        };
+
+        try {
+          localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (err) {
+          log(`Error mic: ${err && err.message ? err.message : err}`);
+          setStatus('Error mic', false);
+          connectBtn.disabled = false;
+          return;
+        }
+        micTrack = localStream.getAudioTracks()[0];
+        micTrack.enabled = false; // push-to-talk inicial
+        pc.addTrack(micTrack, localStream);
+
+        // Realtime audio no se usa en este flujo
+        pc.ontrack = () => {};
+
+        log('Creando offer...');
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        log('Offer listo');
+
+        // Wait for ICE gathering to complete so SDP has candidates (with timeout)
+        await Promise.race([
+          new Promise((resolve) => {
+            if (pc.iceGatheringState === 'complete') return resolve();
+            pc.addEventListener(
+              'icegatheringstatechange',
+              () => {
+                if (pc.iceGatheringState === 'complete') resolve();
+              },
+              { once: true }
+            );
+          }),
+          new Promise((resolve) => setTimeout(resolve, 2000)),
+        ]);
+        log(`ICE final: ${pc.iceGatheringState}`);
+
+        const sdp = pc.localDescription && pc.localDescription.sdp ? pc.localDescription.sdp : '';
+        log(`SDP length: ${sdp.length}`);
+        if (!sdp) {
+          log('SDP vacio: abortando');
+          setStatus('Error', false);
+          connectBtn.disabled = false;
+          return;
+        }
+
+        const voice = voiceSelect ? voiceSelect.value : '';
+        const instructions = buildInstructions();
+        log(`Voz seleccionada: ${voice || '(default)'}`);
+        log(`Instrucciones: ${instructions ? 'si' : 'no'}`);
+        log('Enviando /realtime/session...');
+        let res;
+        try {
+          const url = voice ? `/realtime/session?voice=${encodeURIComponent(voice)}` : '/realtime/session';
+          log(`URL: ${url}`);
+          const headers = { 'content-type': 'application/sdp' };
+          if (instructions) {
+            const maxLen = 4000;
+            const payload = instructions.length > maxLen
+              ? instructions.slice(0, maxLen)
+              : instructions;
+            const encoded = btoa(unescape(encodeURIComponent(payload)));
+            headers['x-realtime-instructions-b64'] = encoded;
+            if (instructions.length > maxLen) {
+              log(`Instrucciones truncadas a ${maxLen} caracteres`);
+            }
+          }
+          res = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: sdp
+          });
+          log(`Respuesta /realtime/session: ${res.status}`);
+        } catch (err) {
+          log(`Error fetch /realtime/session: ${err && err.message ? err.message : err}`);
+          setStatus('Error', false);
+          connectBtn.disabled = false;
+          return;
+        }
+
+        if (!res.ok) {
+          const msg = await res.text();
+          log(`Error /realtime/session: ${msg}`);
+          setStatus('Error', false);
+          connectBtn.disabled = false;
+          return;
+        }
+
+        const answerSdp = await res.text();
+        log(`Answer SDP length: ${answerSdp.length}`);
+        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+        setStatus('Conectado', true);
+        talkBtn.disabled = false;
+        interruptBtn.disabled = false;
+      } catch (err) {
+        log(`Error inesperado: ${err && err.message ? err.message : err}`);
+        setStatus('Error', false);
+        connectBtn.disabled = false;
+      }
+    }
+
+    function toggleTalk() {
+      if (!micTrack) return;
+      micTrack.enabled = !micTrack.enabled;
+      talkBtn.textContent = micTrack.enabled ? 'Hablar (on)' : 'Hablar (mute)';
+      if (micTrack.enabled) {
+        // Si el usuario empieza a hablar, cancelamos la respuesta actual
+        sendEvent({ type: 'response.cancel' });
+      }
+    }
+
+    function sendEvent(payload) {
+      if (dc && dc.readyState === 'open') {
+        dc.send(JSON.stringify(payload));
+      }
+    }
+
+    const bindSave = (el) => {
+      if (!el) return;
+      el.addEventListener('input', saveInstructions);
+      el.addEventListener('change', saveInstructions);
+    };
+
+    connectBtn.addEventListener('click', connect);
+    talkBtn.addEventListener('click', toggleTalk);
+    interruptBtn.addEventListener('click', () => sendEvent({ type: 'response.cancel' }));
+
+    bindSave(voiceSelect);
+    bindSave(seqStep1);
+    bindSave(seqStep2);
+    bindSave(seqStep3);
+    bindSave(seqStep4);
+    bindSave(seqStep5);
+    bindSave(instBase);
+    bindSave(instStyle);
+    bindSave(instRules);
+    bindSave(instSpecial);
+    bindSave(instExtra);
+    loadInstructions();
   </script>
 </body>
 </html>
