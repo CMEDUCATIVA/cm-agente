@@ -803,13 +803,16 @@ async def realtime_session(request: Request) -> StreamingResponse:
         )
     voice = requested_voice or default_voice
 
-    instructions = request.headers.get("x-realtime-instructions")
+    instructions = None
+    instructions_b64 = request.headers.get("x-realtime-instructions-b64")
+    if instructions_b64:
+        try:
+            decoded = base64.b64decode(instructions_b64).decode("utf-8", errors="ignore")
+            instructions = decoded.strip() or None
+        except Exception:
+            instructions = None
     if instructions:
-        instructions = instructions.strip()
-        logger.warning(
-            "realtime_session instructions: len=%s",
-            len(instructions),
-        )
+        logger.warning("realtime_session instructions: len=%s", len(instructions))
 
     # Use warning so it appears even when LOG_LEVEL=WARNING
     logger.warning("realtime_session config: model=%s voice=%s", model, voice)
