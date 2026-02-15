@@ -569,6 +569,8 @@ async def voice_ws(ws: WebSocket) -> None:
         text_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
         async def tts_worker() -> None:
+            chunk_buffer = bytearray()
+            flush_size = 12000
             try:
                 while True:
                     segment = await text_queue.get()
@@ -577,13 +579,26 @@ async def voice_ws(ws: WebSocket) -> None:
                     async for audio_chunk in tts.stream(segment):
                         if cancel_event.is_set():
                             return
+                        if not audio_chunk:
+                            continue
+                        chunk_buffer.extend(audio_chunk)
+                        if len(chunk_buffer) < flush_size:
+                            continue
                         payload = {
                             "type": "audio_chunk",
                             "mime": tts.get_format(),
-                            "data": base64.b64encode(audio_chunk).decode("ascii"),
+                            "data": base64.b64encode(chunk_buffer).decode("ascii"),
                         }
+                        chunk_buffer.clear()
                         await ws.send_json(payload)
             finally:
+                if chunk_buffer:
+                    payload = {
+                        "type": "audio_chunk",
+                        "mime": tts.get_format(),
+                        "data": base64.b64encode(chunk_buffer).decode("ascii"),
+                    }
+                    await ws.send_json(payload)
                 await ws.send_json({"type": "audio_end"})
 
         tts_task = asyncio.create_task(tts_worker())
