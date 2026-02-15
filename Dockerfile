@@ -26,3 +26,4 @@ COPY src/run_service.py .
 
 EXPOSE 8080
 CMD ["python", "run_service.py"]
+
