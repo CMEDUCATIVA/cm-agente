@@ -803,6 +803,14 @@ async def realtime_session(request: Request) -> StreamingResponse:
         )
     voice = requested_voice or default_voice
 
+    instructions = request.headers.get("x-realtime-instructions")
+    if instructions:
+        instructions = instructions.strip()
+        logger.warning(
+            "realtime_session instructions: len=%s",
+            len(instructions),
+        )
+
     # Use warning so it appears even when LOG_LEVEL=WARNING
     logger.warning("realtime_session config: model=%s voice=%s", model, voice)
     session_cfg = {
@@ -810,6 +818,8 @@ async def realtime_session(request: Request) -> StreamingResponse:
         "model": model,
         "audio": {"output": {"voice": voice}},
     }
+    if instructions:
+        session_cfg["instructions"] = instructions
 
     headers = {"Authorization": f"Bearer {api_key}"}
     url = "https://api.openai.com/v1/realtime/calls"
