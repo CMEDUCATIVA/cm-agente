@@ -128,6 +128,18 @@
         <div class="hint">Requiere HTTPS o localhost para el microfono.</div>
       </div>
 
+      <div class="panel">
+        <div class="label">Instrucciones (estilo de habla)</div>
+        <div class="hint">Se aplican al crear la sesiÃ³n. Cambia y reconecta.</div>
+        <div style="display:grid;gap:8px;margin-top:8px;">
+          <textarea id="instBase" placeholder="Base: rol, idioma, tono general"></textarea>
+          <textarea id="instStyle" placeholder="Estilo: longitud, ritmo, tecnicismos, formato"></textarea>
+          <textarea id="instRules" placeholder="Reglas: lo que nunca debe hacer"></textarea>
+          <textarea id="instSpecial" placeholder="EspecializaciÃ³n: contexto de negocio/producto"></textarea>
+          <textarea id="instExtra" placeholder="Extra: saludo fijo, cierre fijo, palabras prohibidas"></textarea>
+        </div>
+      </div>
+
       <audio id="remoteAudio" autoplay></audio>
     </div>
   </div>
@@ -141,6 +153,12 @@
     const logEl = document.getElementById('log');
     const remoteAudio = document.getElementById('remoteAudio');
     const voiceSelect = document.getElementById('voiceSelect');
+    const instBase = document.getElementById('instBase');
+    const instStyle = document.getElementById('instStyle');
+    const instRules = document.getElementById('instRules');
+    const instSpecial = document.getElementById('instSpecial');
+    const instExtra = document.getElementById('instExtra');
+    const STORAGE_KEY = 'cm_realtime_instructions_v1';
 
     let pc;
     let dc;
@@ -157,6 +175,53 @@
       logLines.push(msg);
       if (logLines.length > 8) logLines.shift();
       logEl.textContent = logLines.join('\n');
+    }
+
+    function loadInstructions() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (data.voice && voiceSelect) voiceSelect.value = data.voice;
+        if (data.base && instBase) instBase.value = data.base;
+        if (data.style && instStyle) instStyle.value = data.style;
+        if (data.rules && instRules) instRules.value = data.rules;
+        if (data.special && instSpecial) instSpecial.value = data.special;
+        if (data.extra && instExtra) instExtra.value = data.extra;
+        log('Instrucciones cargadas desde el navegador');
+      } catch {
+        // ignore
+      }
+    }
+
+    function saveInstructions() {
+      try {
+        const data = {
+          voice: voiceSelect ? voiceSelect.value : '',
+          base: instBase ? instBase.value : '',
+          style: instStyle ? instStyle.value : '',
+          rules: instRules ? instRules.value : '',
+          special: instSpecial ? instSpecial.value : '',
+          extra: instExtra ? instExtra.value : '',
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch {
+        // ignore
+      }
+    }
+
+    function buildInstructions() {
+      const parts = [];
+      const push = (label, value) => {
+        const v = (value || '').trim();
+        if (v) parts.push(`${label}:\n${v}`);
+      };
+      push('Base', instBase && instBase.value);
+      push('Estilo', instStyle && instStyle.value);
+      push('Reglas', instRules && instRules.value);
+      push('EspecializaciÃ³n', instSpecial && instSpecial.value);
+      push('Extra', instExtra && instExtra.value);
+      return parts.join('\n\n');
     }
 
     async function connect() {
@@ -229,15 +294,28 @@
         }
 
         const voice = voiceSelect ? voiceSelect.value : '';
+        const instructions = buildInstructions();
         log(`Voz seleccionada: ${voice || '(default)'}`);
+        log(`Instrucciones: ${instructions ? 'si' : 'no'}`);
         log('Enviando /realtime/session...');
         let res;
         try {
           const url = voice ? `/realtime/session?voice=${encodeURIComponent(voice)}` : '/realtime/session';
           log(`URL: ${url}`);
+          const headers = { 'content-type': 'application/sdp' };
+          if (instructions) {
+            const maxLen = 4000;
+            const payload = instructions.length > maxLen
+              ? instructions.slice(0, maxLen)
+              : instructions;
+            headers['x-realtime-instructions'] = payload;
+            if (instructions.length > maxLen) {
+              log(`Instrucciones truncadas a ${maxLen} caracteres`);
+            }
+          }
           res = await fetch(url, {
             method: 'POST',
-            headers: { 'content-type': 'application/sdp' },
+            headers,
             body: sdp
           });
           log(`Respuesta /realtime/session: ${res.status}`);
@@ -286,9 +364,23 @@
       }
     }
 
+    const bindSave = (el) => {
+      if (!el) return;
+      el.addEventListener('input', saveInstructions);
+      el.addEventListener('change', saveInstructions);
+    };
+
     connectBtn.addEventListener('click', connect);
     talkBtn.addEventListener('click', toggleTalk);
     interruptBtn.addEventListener('click', () => sendEvent({ type: 'response.cancel' }));
+
+    bindSave(voiceSelect);
+    bindSave(instBase);
+    bindSave(instStyle);
+    bindSave(instRules);
+    bindSave(instSpecial);
+    bindSave(instExtra);
+    loadInstructions();
   </script>
 </body>
 </html>
