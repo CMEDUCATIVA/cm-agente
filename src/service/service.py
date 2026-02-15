@@ -910,10 +910,18 @@ if web_dir.exists():
 
 @app.get("/voice")
 async def voice_web() -> FileResponse:
-    index = web_dir / "realtime.html"
+    index = web_dir / "index.html"
     if not index.exists():
         raise HTTPException(status_code=404, detail="Voice web not found")
-    return FileResponse(index, media_type="text/html")
+    return FileResponse(
+        index,
+        media_type="text/html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/realtime")
@@ -921,4 +929,12 @@ async def realtime_web() -> FileResponse:
     index = web_dir / "realtime.html"
     if not index.exists():
         raise HTTPException(status_code=404, detail="Realtime web not found")
-    return FileResponse(index, media_type="text/html")
+    return FileResponse(
+        index,
+        media_type="text/html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
