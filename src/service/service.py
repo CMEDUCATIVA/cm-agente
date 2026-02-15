@@ -6,6 +6,8 @@ import json
 import logging
 import secrets
 import warnings
+import wave
+from collections import deque
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,6 +15,7 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 import httpx
+import numpy as np
 from fastapi import (
     APIRouter,
     Depends,
@@ -64,6 +67,26 @@ from voice import SpeechToText, TextToSpeech
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parents[1]
+
+try:
+    import torch
+    from silero_vad import VADIterator, load_silero_vad
+except Exception:  # pragma: no cover - optional dependency
+    torch = None
+    VADIterator = None  # type: ignore[assignment]
+    load_silero_vad = None  # type: ignore[assignment]
+
+_SILERO_MODEL = None
+
+
+def _get_silero_model():
+    global _SILERO_MODEL
+    if _SILERO_MODEL is not None:
+        return _SILERO_MODEL
+    if load_silero_vad is None:
+        return None
+    _SILERO_MODEL = load_silero_vad()
+    return _SILERO_MODEL
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -506,6 +529,16 @@ async def _transcribe_audio(audio_bytes: bytes, content_type: str | None) -> str
     )
 
 
+def _pcm16_to_wav_bytes(pcm_bytes: bytes, sample_rate: int = 16000) -> bytes:
+    with io.BytesIO() as buf:
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm_bytes)
+        return buf.getvalue()
+
+
 @app.websocket("/voice/ws")
 async def voice_ws(ws: WebSocket) -> None:
     await ws.accept()
@@ -521,6 +554,22 @@ async def voice_ws(ws: WebSocket) -> None:
         "thread_id": None,
         "user_id": None,
     }
+
+    vad_model = _get_silero_model()
+    vad = None
+    if vad_model and VADIterator:
+        vad = VADIterator(
+            vad_model,
+            threshold=0.5,
+            sampling_rate=16000,
+            min_silence_duration_ms=300,
+            speech_pad_ms=30,
+        )
+    vad_pcm_buffer = bytearray()
+    utterance_buffer = bytearray()
+    pre_frames: deque[bytes] = deque(maxlen=5)
+    speech_active = False
+    bytes_per_frame = 512 * 2
 
     async def stop_current() -> None:
         nonlocal current_task
@@ -645,12 +694,56 @@ async def voice_ws(ws: WebSocket) -> None:
         await ws.send_json({"type": "final_text", "text": reply_text})
         await ws.send_json({"type": "status", "value": "done"})
 
+    async def start_utterance_turn(audio_pcm: bytes) -> None:
+        nonlocal current_task
+        if not audio_pcm:
+            return
+        await stop_current()
+        wav_bytes = _pcm16_to_wav_bytes(audio_pcm, sample_rate=16000)
+        current_task = asyncio.create_task(run_turn(wav_bytes, "audio/wav", None))
+
+    async def handle_pcm_chunk(pcm_bytes: bytes) -> None:
+        nonlocal speech_active, utterance_buffer
+        if not vad or torch is None:
+            await ws.send_json({"type": "error", "message": "silero_vad_not_available"})
+            return
+        vad_pcm_buffer.extend(pcm_bytes)
+        while len(vad_pcm_buffer) >= bytes_per_frame:
+            frame = bytes(vad_pcm_buffer[:bytes_per_frame])
+            del vad_pcm_buffer[:bytes_per_frame]
+            if not speech_active:
+                pre_frames.append(frame)
+            samples = np.frombuffer(frame, dtype=np.int16).astype("float32") / 32768.0
+            frame_tensor = torch.from_numpy(samples)
+            event = vad(frame_tensor)
+            if event and "start" in event:
+                if current_task and not current_task.done():
+                    await stop_current()
+                    await ws.send_json({"type": "status", "value": "interrupted"})
+                speech_active = True
+                for pre in pre_frames:
+                    utterance_buffer.extend(pre)
+                pre_frames.clear()
+                await ws.send_json({"type": "speech_start"})
+            if speech_active:
+                utterance_buffer.extend(frame)
+            if event and "end" in event:
+                speech_active = False
+                await ws.send_json({"type": "speech_end"})
+                audio_pcm = bytes(utterance_buffer)
+                utterance_buffer = bytearray()
+                await start_utterance_turn(audio_pcm)
+
     try:
         while True:
             msg = await ws.receive_json()
             msg_type = msg.get("type")
             if msg_type == "config":
                 config.update({k: v for k, v in msg.items() if k in config})
+            elif msg_type == "pcm_chunk":
+                data = msg.get("data") or ""
+                if data:
+                    await handle_pcm_chunk(base64.b64decode(data))
             elif msg_type == "audio_chunk":
                 if msg.get("mime"):
                     audio_mime = msg.get("mime")
