@@ -5,6 +5,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Force CPU-only PyTorch wheels to avoid CUDA bloat during build
+ENV PIP_INDEX_URL="https://download.pytorch.org/whl/cpu"
+ENV PIP_EXTRA_INDEX_URL="https://pypi.org/simple"
+
 COPY pyproject.toml .
 COPY README.md .
 COPY LICENSE .
