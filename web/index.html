@@ -193,11 +193,12 @@
     let bargeAnalyser;
     let bargeRunning = false;
     let bargeHits = 0;
-    const VAD_THRESHOLD = 0.02;
+    const VAD_THRESHOLD = 0.03;
     const VAD_SILENCE_MS = 900;
-    const VAD_MIN_VOICE_RATIO = 0.18;
+    const VAD_MIN_VOICE_RATIO = 0.25;
     const VAD_MIN_ENERGY_DB = -55;
-    const VAD_BARGE_HITS = 2;
+    const VAD_BARGE_HITS = 3;
+    const BARGE_COOLDOWN_MS = 800;
     let processing = false;
     let isSpeaking = false;
     let audioEnded = true;
@@ -205,6 +206,7 @@
     let audioReceived = false;
     let audioBufferedBytes = 0;
     let playbackStarted = false;
+    let playbackStartTs = 0;
     const MIN_PLAY_BYTES = 10000;
     const MIN_APPEND_BYTES = 6000;
     const MIN_RECORD_BYTES = 6000;
@@ -317,6 +319,10 @@
 
     function runBargeIn() {
       if (!bargeRunning || !bargeAnalyser || !bargeCtx) return;
+      if (isSpeaking && playbackStartTs && (Date.now() - playbackStartTs) < BARGE_COOLDOWN_MS) {
+        requestAnimationFrame(runBargeIn);
+        return;
+      }
       const { rms, hasVoice } = detectVoice(bargeAnalyser, bargeCtx);
       if (rms > VAD_THRESHOLD && hasVoice) {
         bargeHits += 1;
@@ -603,6 +609,7 @@
     audioEl.addEventListener('play', () => {
       isSpeaking = true;
       audioEnded = false;
+      playbackStartTs = Date.now();
       startBargeInMonitor();
     });
     audioEl.addEventListener('pause', () => {
