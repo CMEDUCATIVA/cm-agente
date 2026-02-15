@@ -15,9 +15,10 @@ from agents.lazy_agent import LazyLoadingAgent
 from agents.openproject_agent import openproject_agent
 from agents.rag_assistant import rag_assistant
 from agents.research_assistant import research_assistant
+from agents.personal_assistant import personal_assistant
 from schema import AgentInfo
 
-DEFAULT_AGENT = "research-assistant"
+DEFAULT_AGENT = "personal-assistant"
 
 # Type alias to handle LangGraph's different agent patterns
 # - @entrypoint functions return Pregel
@@ -34,6 +35,10 @@ class Agent:
 
 agents: dict[str, Agent] = {
     "chatbot": Agent(description="A simple chatbot.", graph_like=chatbot),
+    "personal-assistant": Agent(
+        description="A personal assistant with concise, conversational responses.",
+        graph_like=personal_assistant,
+    ),
     "openproject-agent": Agent(
         description="An OpenProject agent backed by an OpenProject MCP HTTP adapter.",
         graph_like=openproject_agent,
