@@ -104,6 +104,21 @@
         <button id="connectBtn">Conectar</button>
         <button id="talkBtn" class="secondary" disabled>Hablar (mute)</button>
         <button id="interruptBtn" disabled>Interrumpir</button>
+        <label class="hint" style="display:flex;align-items:center;gap:6px;">
+          Voz:
+          <select id="voiceSelect">
+            <option value="alloy">alloy</option>
+            <option value="shimmer">shimmer</option>
+            <option value="coral">coral</option>
+            <option value="verse">verse</option>
+            <option value="sage">sage</option>
+            <option value="echo">echo</option>
+            <option value="ash">ash</option>
+            <option value="ballad">ballad</option>
+            <option value="marin">marin</option>
+            <option value="cedar">cedar</option>
+          </select>
+        </label>
         <span class="status"><span id="dot" class="dot"></span><span id="statusText">Desconectado</span></span>
       </div>
 
@@ -125,6 +140,7 @@
     const dot = document.getElementById('dot');
     const logEl = document.getElementById('log');
     const remoteAudio = document.getElementById('remoteAudio');
+    const voiceSelect = document.getElementById('voiceSelect');
 
     let pc;
     let dc;
@@ -214,8 +230,10 @@
 
         log('Enviando /realtime/session...');
         let res;
+        const voice = voiceSelect ? voiceSelect.value : '';
         try {
-          res = await fetch('/realtime/session', {
+          const url = voice ? `/realtime/session?voice=${encodeURIComponent(voice)}` : '/realtime/session';
+          res = await fetch(url, {
             method: 'POST',
             headers: { 'content-type': 'application/sdp' },
             body: sdp
