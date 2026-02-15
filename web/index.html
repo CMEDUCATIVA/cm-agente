@@ -325,11 +325,15 @@
       }
       if (bargeHits >= VAD_BARGE_HITS) {
         bargeHits = 0;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'interrupt' }));
-        }
-        stopPlayback();
-        if (!isRecording) {
+        if (isSpeaking || !audioEnded) {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'interrupt' }));
+          }
+          stopPlayback();
+          if (!isRecording) {
+            startRecording(true);
+          }
+        } else if (!isRecording) {
           startRecording(true);
         }
         return;
