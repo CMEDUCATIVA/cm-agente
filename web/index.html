@@ -190,6 +190,8 @@
     let lastVoiceTs = 0;
     const VAD_THRESHOLD = 0.02;
     const VAD_SILENCE_MS = 900;
+    const VAD_MIN_VOICE_RATIO = 0.18;
+    const VAD_MIN_ENERGY_DB = -55;
     let processing = false;
     let isSpeaking = false;
     let audioEnded = true;
@@ -197,8 +199,8 @@
     let audioReceived = false;
     let audioBufferedBytes = 0;
     let playbackStarted = false;
-    const MIN_PLAY_BYTES = 16000;
-    const MIN_APPEND_BYTES = 8000;
+    const MIN_PLAY_BYTES = 10000;
+    const MIN_APPEND_BYTES = 6000;
     const MIN_RECORD_BYTES = 6000;
     let recordedBytes = 0;
 
@@ -243,6 +245,22 @@
         sourceBuffer.addEventListener('updateend', appendNextChunk);
         appendNextChunk();
       }, { once: true });
+    }
+
+    function stopPlayback() {
+      try {
+        audioEl.pause();
+        audioEl.currentTime = 0;
+      } catch (_) {}
+      audioQueue = [];
+      endOfStreamPending = false;
+      audioBufferedBytes = 0;
+      playbackStarted = false;
+      if (mediaSource && mediaSource.readyState === 'open') {
+        try {
+          mediaSource.endOfStream();
+        } catch (_) {}
+      }
     }
 
     function appendNextChunk() {
@@ -318,10 +336,18 @@
         if (msg.type === 'status') {
           setStatus(msg.value, msg.value === 'processing');
           if (msg.value === 'processing') processing = true;
-          if (msg.value === 'done' || msg.value === 'error') processing = false;
+          if (msg.value === 'done' || msg.value === 'error' || msg.value === 'interrupted') {
+            processing = false;
+          }
           if (msg.value === 'done' && autoMode) {
             responseDone = true;
             if (!audioReceived && !isRecording) {
+              startRecording(true);
+            }
+          }
+          if (msg.value === 'interrupted') {
+            stopPlayback();
+            if (autoMode && !isRecording) {
               startRecording(true);
             }
           }
@@ -358,6 +384,7 @@
       resetAudioStream();
       if (!auto && (processing || isSpeaking) && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'interrupt' }));
+        stopPlayback();
       }
 
       try {
@@ -432,8 +459,29 @@
         sum += v * v;
       }
       const rms = Math.sqrt(sum / data.length);
+      let hasVoice = false;
+      if (audioCtx) {
+        const freqData = new Float32Array(analyser.frequencyBinCount);
+        analyser.getFloatFrequencyData(freqData);
+        const nyquist = audioCtx.sampleRate / 2;
+        const binHz = nyquist / freqData.length;
+        let voiceEnergy = 0;
+        let totalEnergy = 0;
+        for (let i = 0; i < freqData.length; i++) {
+          const db = freqData[i];
+          if (db < VAD_MIN_ENERGY_DB) continue;
+          const hz = i * binHz;
+          const linear = Math.pow(10, db / 20);
+          totalEnergy += linear;
+          if (hz >= 85 && hz <= 3000) {
+            voiceEnergy += linear;
+          }
+        }
+        const ratio = totalEnergy > 0 ? voiceEnergy / totalEnergy : 0;
+        hasVoice = ratio >= VAD_MIN_VOICE_RATIO;
+      }
       const now = Date.now();
-      if (rms > VAD_THRESHOLD) {
+      if (rms > VAD_THRESHOLD && hasVoice) {
         speechSeen = true;
         lastVoiceTs = now;
       }
