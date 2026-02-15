@@ -94,12 +94,32 @@
     .hint { font-size: 12px; color: var(--muted); }
     #log {
       max-height: 220px;
-      overflow-y: auto;
+      overflow-y: scroll;
       white-space: pre-wrap;
       font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
       background: #f7f3ef;
       border-radius: 8px;
       padding: 8px;
+      user-select: text;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .panel-head .label {
+      margin-bottom: 0;
+    }
+    #copyLogBtn {
+      background: #111;
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
     }
   </style>
 </head>
@@ -113,26 +133,14 @@
         <button id="connectBtn">Conectar</button>
         <button id="talkBtn" class="secondary" disabled>Hablar (mute)</button>
         <button id="interruptBtn" disabled>Interrumpir</button>
-        <label class="hint" style="display:flex;align-items:center;gap:6px;">
-          Voz:
-          <select id="voiceSelect">
-            <option value="alloy">alloy</option>
-            <option value="shimmer">shimmer</option>
-            <option value="coral">coral</option>
-            <option value="verse">verse</option>
-            <option value="sage">sage</option>
-            <option value="echo">echo</option>
-            <option value="ash">ash</option>
-            <option value="ballad">ballad</option>
-            <option value="marin">marin</option>
-            <option value="cedar">cedar</option>
-          </select>
-        </label>
         <span class="status"><span id="dot" class="dot"></span><span id="statusText">Desconectado</span></span>
       </div>
 
       <div class="panel">
-        <div class="label">Estado</div>
+        <div class="panel-head">
+          <div class="label">Estado</div>
+          <button id="copyLogBtn">Copiar log</button>
+        </div>
         <div id="log">—</div>
         <div class="hint">Requiere HTTPS o localhost para el microfono.</div>
       </div>
@@ -175,10 +183,10 @@
     const statusText = document.getElementById('statusText');
     const dot = document.getElementById('dot');
     const logEl = document.getElementById('log');
+    const copyLogBtn = document.getElementById('copyLogBtn');
     const transcriptEl = document.getElementById('transcript');
     const remoteAudio = document.getElementById('remoteAudio');
     const replyEl = document.getElementById('reply');
-    const voiceSelect = document.getElementById('voiceSelect');
     const seqStep1 = document.getElementById('seqStep1');
     const seqStep2 = document.getElementById('seqStep2');
     const seqStep3 = document.getElementById('seqStep3');
@@ -217,6 +225,17 @@
       logLines.push(msg);
       if (logLines.length > 8) logLines.shift();
       logEl.textContent = logLines.join('\n');
+    }
+
+    async function copyLog() {
+      const text = logLines.join('\n');
+      if (!text.trim()) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        log('log: copiado');
+      } catch (err) {
+        log('log: no se pudo copiar');
+      }
     }
 
     function resetAudioStream() {
@@ -319,7 +338,6 @@
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
         const data = JSON.parse(raw);
-        if (data.voice && voiceSelect) voiceSelect.value = data.voice;
         if (data.seq1 && seqStep1) seqStep1.value = data.seq1;
         if (data.seq2 && seqStep2) seqStep2.value = data.seq2;
         if (data.seq3 && seqStep3) seqStep3.value = data.seq3;
@@ -339,7 +357,6 @@
     function saveInstructions() {
       try {
         const data = {
-          voice: voiceSelect ? voiceSelect.value : '',
           seq1: seqStep1 ? seqStep1.value : '',
           seq2: seqStep2 ? seqStep2.value : '',
           seq3: seqStep3 ? seqStep3.value : '',
@@ -461,14 +478,12 @@
           return;
         }
 
-        const voice = voiceSelect ? voiceSelect.value : '';
         const instructions = buildInstructions();
-        log(`realtime: voz ${voice || '(default)'}`);
         log(`realtime: instrucciones ${instructions ? 'si' : 'no'}`);
         log('realtime: enviando /realtime/session');
         let res;
         try {
-          const url = voice ? `/realtime/session?voice=${encodeURIComponent(voice)}` : '/realtime/session';
+          const url = '/realtime/session';
           log(`realtime: url ${url}`);
           const headers = { 'content-type': 'application/sdp' };
           if (instructions) {
@@ -544,7 +559,6 @@
     talkBtn.addEventListener('click', toggleTalk);
     interruptBtn.addEventListener('click', () => sendEvent({ type: 'response.cancel' }));
 
-    bindSave(voiceSelect);
     bindSave(seqStep1);
     bindSave(seqStep2);
     bindSave(seqStep3);
@@ -555,6 +569,7 @@
     bindSave(instRules);
     bindSave(instSpecial);
     bindSave(instExtra);
+    copyLogBtn.addEventListener('click', copyLog);
     loadInstructions();
     log('log listo');
   </script>
