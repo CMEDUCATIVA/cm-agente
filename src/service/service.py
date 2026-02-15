@@ -778,9 +778,33 @@ async def realtime_session(request: Request) -> StreamingResponse:
         raise HTTPException(status_code=400, detail="missing_sdp_offer")
 
     model = getattr(settings, "REALTIME_MODEL", None) or "gpt-realtime"
-    voice = getattr(settings, "REALTIME_VOICE", None) or "alloy"
+    default_voice = getattr(settings, "REALTIME_VOICE", None) or "alloy"
+    requested_voice = request.query_params.get("voice") or None
+    supported_voices = {
+        "alloy",
+        "ash",
+        "ballad",
+        "coral",
+        "echo",
+        "sage",
+        "shimmer",
+        "verse",
+        "marin",
+        "cedar",
+    }
+    if requested_voice and requested_voice not in supported_voices:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsupported_voice",
+                "requested_voice": requested_voice,
+                "supported_voices": sorted(supported_voices),
+            },
+        )
+    voice = requested_voice or default_voice
 
-    logger.info("realtime_session config: model=%s voice=%s", model, voice)
+    # Use warning so it appears even when LOG_LEVEL=WARNING
+    logger.warning("realtime_session config: model=%s voice=%s", model, voice)
     session_cfg = {
         "type": "realtime",
         "model": model,
