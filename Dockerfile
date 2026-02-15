@@ -1,4 +1,4 @@
-FROM python:3.12.3-slim
+FROM python:3.11-slim
 
 # EasyPanel (and similar panels) often default to building `./Dockerfile` at repo root.
 # This Dockerfile builds the FastAPI agent service container.
