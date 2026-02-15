@@ -197,16 +197,10 @@
     const TARGET_SAMPLE_RATE = 16000;
     const PROCESSOR_SIZE = 4096;
 
-    const FLOW_LABEL = 'silero_vad → stt → llm → tts';
-
     function setStatus(text, live=false) {
       statusText.textContent = text;
       dot.classList.toggle('live', live);
       log(`status: ${text}`);
-    }
-
-    function setFlowStatus(base, live=false) {
-      setStatus(`${base} (${FLOW_LABEL})`, live);
     }
 
     function log(msg) {
@@ -446,11 +440,7 @@
         }
         const msg = JSON.parse(event.data);
         if (msg.type === 'status') {
-          if (msg.value === 'processing') {
-            setFlowStatus('Procesando', true);
-          } else {
-            setStatus(msg.value, msg.value === 'processing');
-          }
+          setStatus(msg.value, msg.value === 'processing');
           if (msg.value === 'processing') {
             replyEl.textContent = '';
             transcriptEl.textContent = '—';
