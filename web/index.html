@@ -112,6 +112,25 @@
     .panel-head .label {
       margin-bottom: 0;
     }
+    .agent-select {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      background: #fff;
+      border: 1px solid #e6e1db;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .agent-select select {
+      border: 1px solid #e6e1db;
+      border-radius: 8px;
+      padding: 4px 8px;
+      font-size: 13px;
+      background: #fff;
+      color: var(--ink);
+    }
     #copyLogBtn {
       background: #111;
       color: #fff;
@@ -133,6 +152,16 @@
         <button id="connectBtn">Conectar</button>
         <button id="talkBtn" class="secondary" disabled>Hablar (mute)</button>
         <button id="interruptBtn" disabled>Interrumpir</button>
+        <label class="agent-select">
+          Agente:
+          <select id="agentSelect">
+            <option value="agente-call-center">Agente-Call-Center</option>
+            <option value="personal-assistant">Personal Assistant</option>
+            <option value="chatbot">Chatbot</option>
+            <option value="research-assistant">Research Assistant</option>
+            <option value="rag-assistant">RAG Assistant</option>
+          </select>
+        </label>
         <span class="status"><span id="dot" class="dot"></span><span id="statusText">Desconectado</span></span>
       </div>
 
@@ -187,6 +216,7 @@
     const transcriptEl = document.getElementById('transcript');
     const remoteAudio = document.getElementById('remoteAudio');
     const replyEl = document.getElementById('reply');
+    const agentSelect = document.getElementById('agentSelect');
     const seqStep1 = document.getElementById('seqStep1');
     const seqStep2 = document.getElementById('seqStep2');
     const seqStep3 = document.getElementById('seqStep3');
@@ -305,7 +335,8 @@
       ws = new WebSocket(`${proto}://${location.host}/voice/ws`);
       ws.onopen = () => {
         log('ws: abierto');
-        ws.send(JSON.stringify({ type: 'config' }));
+        const agent_id = agentSelect ? agentSelect.value : undefined;
+        ws.send(JSON.stringify({ type: 'config', agent_id }));
         log('ws: enviado config');
       };
       ws.onclose = () => log('ws: cerrado');
