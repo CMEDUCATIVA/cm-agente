@@ -149,6 +149,14 @@ class TextToSpeech:
             >>> if tts:
             ...     audio = tts.generate("Hello world")
         """
+        try:
+            from dotenv import find_dotenv, load_dotenv
+
+            load_dotenv(find_dotenv())
+        except Exception:
+            # If dotenv isn't available or fails, continue with existing env
+            pass
+
         provider = os.getenv("VOICE_TTS_PROVIDER")
 
         # If provider not set, voice features are disabled
@@ -156,16 +164,13 @@ class TextToSpeech:
             logger.debug("VOICE_TTS_PROVIDER not set, TTS disabled")
             return None
 
-        try:
-            config: dict = {}
-            if provider == "openai":
-                # Optional overrides for OpenAI TTS
-                config = {
+        def _config_for(p: str) -> dict:
+            if p == "openai":
+                return {
                     "voice": os.getenv("OPENAI_TTS_VOICE", "alloy"),
                     "model": os.getenv("OPENAI_TTS_MODEL", "tts-1"),
                 }
-            elif provider == "elevenlabs":
-                # ElevenLabs-specific settings
+            if p == "elevenlabs":
                 voice_settings = None
                 voice_settings_raw = os.getenv("ELEVENLABS_VOICE_SETTINGS")
                 if voice_settings_raw:
@@ -176,20 +181,31 @@ class TextToSpeech:
                             "Invalid ELEVENLABS_VOICE_SETTINGS JSON, ignoring it",
                             exc_info=True,
                         )
-                config = {
+                return {
                     "voice_id": os.getenv("ELEVENLABS_VOICE_ID"),
                     "model_id": os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2"),
                     "output_format": os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128"),
                     "language_code": os.getenv("ELEVENLABS_LANGUAGE_CODE"),
                     "voice_settings": voice_settings,
                 }
+            return {}
 
-            # Create instance with provider from environment
-            # Validates provider and raises ValueError if invalid
+        try:
+            config = _config_for(provider)
             return cls(provider=cast(Provider, provider), **config)
         except Exception as e:
-            # Log error but don't crash - allow app to continue without voice
             logger.error(f"Failed to create TTS provider: {e}", exc_info=True)
+            # Fallback: if ElevenLabs fails, try OpenAI TTS
+            if provider == "elevenlabs":
+                try:
+                    logger.warning("Falling back to OpenAI TTS")
+                    fallback_config = _config_for("openai")
+                    return cls(provider="openai", **fallback_config)
+                except Exception as fallback_error:
+                    logger.error(
+                        f"Failed to create OpenAI TTS fallback: {fallback_error}",
+                        exc_info=True,
+                    )
             return None
 
     def generate(self, text: str) -> bytes | None:
