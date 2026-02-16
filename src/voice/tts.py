@@ -219,7 +219,14 @@ class TextToSpeech:
         Returns:
             Audio bytes (format depends on provider), or None on failure
         """
-        return self._provider.generate(text)
+        audio = self._provider.generate(text)
+        if audio is not None:
+            return audio
+        if self._provider_name == "elevenlabs":
+            fallback = self._get_openai_fallback()
+            if fallback:
+                return fallback.generate(text)
+        return None
 
     async def stream(self, text: str):
         """Stream speech audio from text when supported.
@@ -228,12 +235,29 @@ class TextToSpeech:
         """
         stream_fn = getattr(self._provider, "stream", None)
         if callable(stream_fn):
+            yielded = False
             async for chunk in stream_fn(text):
-                yield chunk
-        else:
-            audio = self._provider.generate(text)
-            if audio:
-                yield audio
+                if chunk:
+                    yielded = True
+                    yield chunk
+            if yielded or self._provider_name != "elevenlabs":
+                return
+            fallback = self._get_openai_fallback()
+            if fallback:
+                async for chunk in fallback.stream(text):
+                    if chunk:
+                        yield chunk
+            return
+        audio = self._provider.generate(text)
+        if audio:
+            yield audio
+            return
+        if self._provider_name == "elevenlabs":
+            fallback = self._get_openai_fallback()
+            if fallback:
+                audio = fallback.generate(text)
+                if audio:
+                    yield audio
 
     def get_format(self) -> str:
         """Get audio format (MIME type) for this provider.
@@ -242,3 +266,19 @@ class TextToSpeech:
             MIME type string (e.g., "audio/mp3")
         """
         return self._provider.get_format()
+
+    def _get_openai_fallback(self):
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.error("OpenAI API key not set; cannot fallback to OpenAI TTS")
+            return None
+        try:
+            from voice.providers.openai_tts import OpenAITTS
+
+            voice = os.getenv("OPENAI_TTS_VOICE", "alloy")
+            model = os.getenv("OPENAI_TTS_MODEL", "tts-1")
+            logger.warning("Falling back to OpenAI TTS at runtime")
+            return OpenAITTS(api_key=api_key, voice=voice, model=model)
+        except Exception as e:
+            logger.error(f"Failed to create OpenAI TTS fallback: {e}", exc_info=True)
+            return None
