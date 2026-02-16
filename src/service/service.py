@@ -573,8 +573,8 @@ async def voice_ws(ws: WebSocket) -> None:
         kwargs, _ = await _handle_input(user_input, agent)
 
         tts = TextToSpeech.from_env()
-        if not tts or tts.provider != "elevenlabs":
-            await ws.send_json({"type": "error", "message": "ELEVENLABS TTS not configured"})
+        if not tts:
+            await ws.send_json({"type": "error", "message": "TTS not configured"})
             return
 
         text_queue: asyncio.Queue[str | None] = asyncio.Queue()
