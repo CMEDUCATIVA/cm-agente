@@ -244,9 +244,15 @@ class TextToSpeech:
                 return
             fallback = self._get_openai_fallback()
             if fallback:
-                async for chunk in fallback.stream(text):
-                    if chunk:
-                        yield chunk
+                stream_fn = getattr(fallback, "stream", None)
+                if callable(stream_fn):
+                    async for chunk in stream_fn(text):
+                        if chunk:
+                            yield chunk
+                else:
+                    audio = fallback.generate(text)
+                    if audio:
+                        yield audio
             return
         audio = self._provider.generate(text)
         if audio:
