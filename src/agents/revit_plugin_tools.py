@@ -47,15 +47,28 @@ async def revit_say_hello() -> dict[str, Any]:
 
 
 @tool("Revit_GetAvailableFamilyTypes")
-async def revit_get_available_family_types(params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Call get_available_family_types. Pass raw payload in params when needed."""
-    return await _exec_revit_command("get_available_family_types", params)
+async def revit_get_available_family_types(
+    limit: int = 100,
+    category: str | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """List family types, with optional limit/category filters."""
+    payload = dict(params or {})
+    payload.setdefault("limit", max(1, min(int(limit), 2000)))
+    if category:
+        payload.setdefault("category", str(category))
+    return await _exec_revit_command("get_available_family_types", payload)
 
 
 @tool("Revit_GetCurrentViewElements")
-async def revit_get_current_view_elements(params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Call get_current_view_elements. Pass raw payload in params when needed."""
-    return await _exec_revit_command("get_current_view_elements", params)
+async def revit_get_current_view_elements(
+    limit: int = 200,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Get elements in active view with explicit limit."""
+    payload = dict(params or {})
+    payload.setdefault("limit", max(1, min(int(limit), 5000)))
+    return await _exec_revit_command("get_current_view_elements", payload)
 
 
 @tool("Revit_GetCurrentViewInfo")
@@ -123,21 +136,38 @@ async def revit_operate_element(data: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool("Revit_ExportRoomData")
-async def revit_export_room_data(params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Call export_room_data. Pass raw payload in params when needed."""
-    return await _exec_revit_command("export_room_data", params)
+async def revit_export_room_data(
+    limit: int = 200,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export room data with optional limit."""
+    payload = dict(params or {})
+    payload.setdefault("limit", max(1, min(int(limit), 5000)))
+    return await _exec_revit_command("export_room_data", payload)
 
 
 @tool("Revit_GetMaterialQuantities")
-async def revit_get_material_quantities(params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Call get_material_quantities. Pass raw payload in params when needed."""
-    return await _exec_revit_command("get_material_quantities", params)
+async def revit_get_material_quantities(
+    max_elements: int = 1000,
+    top_materials: int = 100,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Get material quantities with explicit limits."""
+    payload = dict(params or {})
+    payload.setdefault("max_elements", max(1, min(int(max_elements), 20000)))
+    payload.setdefault("top_materials", max(1, min(int(top_materials), 5000)))
+    return await _exec_revit_command("get_material_quantities", payload)
 
 
 @tool("Revit_AnalyzeModelStatistics")
-async def revit_analyze_model_statistics(params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Call analyze_model_statistics. Pass raw payload in params when needed."""
-    return await _exec_revit_command("analyze_model_statistics", params)
+async def revit_analyze_model_statistics(
+    top_categories: int = 25,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Analyze model statistics with explicit top_categories arg."""
+    payload = dict(params or {})
+    payload.setdefault("top_categories", max(1, min(int(top_categories), 200)))
+    return await _exec_revit_command("analyze_model_statistics", payload)
 
 
 @tool("Revit_CreateGrid")
