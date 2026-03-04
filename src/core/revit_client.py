@@ -4,6 +4,10 @@ import time
 import uuid
 from typing import Any
 
+from core.revit_bridge import (
+    RevitBridgeSessionNotFound,
+    revit_bridge_manager,
+)
 from core.settings import settings
 
 
@@ -17,7 +21,26 @@ class RevitPluginClient:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
 
-    async def send_command(self, method: str, params: dict[str, Any] | None = None) -> Any:
+    async def send_command(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        workstation_id: str | None = None,
+    ) -> Any:
+        if settings.REVIT_BRIDGE_ENABLED:
+            target_workstation = workstation_id or settings.REVIT_BRIDGE_DEFAULT_WORKSTATION_ID
+            if target_workstation:
+                try:
+                    return await revit_bridge_manager.send_command(
+                        workstation_id=target_workstation,
+                        method=method,
+                        params=params or {},
+                        timeout_seconds=int(settings.REVIT_BRIDGE_COMMAND_TIMEOUT_SECONDS),
+                    )
+                except RevitBridgeSessionNotFound:
+                    # Fallback to direct socket mode if requested workstation is not connected.
+                    pass
+
         request_id = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
         payload = {
             "jsonrpc": "2.0",
