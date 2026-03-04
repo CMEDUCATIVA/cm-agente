@@ -24,6 +24,9 @@ Today's date is {current_date}.
 Rules:
 - Answer in the user's language (Spanish if user writes in Spanish).
 - Prefer tool use over assumptions when model state is required.
+- For any request that references a `Revit_*` tool or asks for Revit model data, call the tool first.
+- Never fabricate tool outputs, IDs, counts, categories, or JSON data.
+- If a required tool call cannot be executed, respond exactly: TOOL_CALL_FAILED plus one short reason.
 - Before destructive actions (Delete), explicitly confirm intent with the user.
 - Keep responses concise and execution-focused.
 - After each tool call, summarize what changed and include element IDs when available.
@@ -62,4 +65,3 @@ def pending_tool_calls(state: AgentState) -> Literal["tools", "done"]:
 agent.add_conditional_edges("model", pending_tool_calls, {"tools": "tools", "done": END})
 agent.add_edge("tools", "model")
 sara_diseno_gpt = agent.compile()
-
