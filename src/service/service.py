@@ -42,6 +42,7 @@ from langsmith import Client as LangsmithClient
 
 from agents import DEFAULT_AGENT, AgentGraph, get_agent, get_all_agent_info, load_agent
 from core import settings
+from core.revit_bridge import RevitBridgeError, revit_bridge_manager
 from core.report_store import resolve_report_path
 from memory import initialize_database, initialize_store
 from schema import (
@@ -902,7 +903,84 @@ async def health_check():
     return health_status
 
 
+@router.get("/revit-bridge/sessions")
+async def revit_bridge_sessions() -> dict[str, Any]:
+    """List connected Revit bridge sessions."""
+    sessions = await revit_bridge_manager.list_sessions()
+    return {"count": len(sessions), "sessions": sessions}
+
+
+@router.post("/revit-bridge/dispatch")
+async def revit_bridge_dispatch(body: dict[str, Any]) -> dict[str, Any]:
+    """Dispatch a command to a connected Revit workstation."""
+    workstation_id = str(body.get("workstation_id") or "").strip()
+    method = str(body.get("method") or "").strip()
+    params = body.get("params") if isinstance(body.get("params"), dict) else {}
+    timeout_seconds = int(body.get("timeout_seconds") or settings.REVIT_BRIDGE_COMMAND_TIMEOUT_SECONDS)
+    if not workstation_id:
+        raise HTTPException(status_code=422, detail="workstation_id is required")
+    if not method:
+        raise HTTPException(status_code=422, detail="method is required")
+    try:
+        result = await revit_bridge_manager.send_command(
+            workstation_id=workstation_id,
+            method=method,
+            params=params,
+            timeout_seconds=timeout_seconds,
+        )
+    except RevitBridgeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="revit_command_timeout")
+    return {"ok": True, "workstation_id": workstation_id, "method": method, "result": result}
+
+
 app.include_router(router)
+
+
+@app.websocket("/revit-bridge")
+async def revit_bridge_socket(websocket: WebSocket) -> None:
+    """
+    Revit bridge websocket endpoint.
+    Query:
+    - workstation_id: required, unique station/session identifier
+    - token: optional, required when REVIT_BRIDGE_AUTH_TOKEN is configured
+    """
+    workstation_id = (websocket.query_params.get("workstation_id") or "").strip()
+    token = websocket.query_params.get("token") or ""
+    expected_token = (
+        settings.REVIT_BRIDGE_AUTH_TOKEN.get_secret_value()
+        if settings.REVIT_BRIDGE_AUTH_TOKEN
+        else None
+    )
+    if expected_token and not secrets.compare_digest(token, expected_token):
+        await websocket.close(code=1008, reason="invalid_bridge_token")
+        return
+    if not workstation_id:
+        await websocket.close(code=1008, reason="missing_workstation_id")
+        return
+
+    await websocket.accept()
+    await revit_bridge_manager.register(workstation_id, websocket)
+    logger.warning("Revit bridge connected: workstation_id=%s", workstation_id)
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            if not isinstance(payload, dict):
+                continue
+            msg_type = str(payload.get("type") or "")
+            if msg_type == "ping":
+                await revit_bridge_manager.touch(workstation_id)
+                await websocket.send_json({"type": "pong"})
+                continue
+            await revit_bridge_manager.handle_incoming_message(workstation_id, payload)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("Revit bridge socket error: workstation_id=%s", workstation_id)
+    finally:
+        await revit_bridge_manager.unregister(workstation_id)
+        logger.warning("Revit bridge disconnected: workstation_id=%s", workstation_id)
 
 web_dir = BASE_DIR / "web"
 if not web_dir.exists():
