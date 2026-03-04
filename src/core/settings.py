@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     OPENPROJECT_MCP_HTTP_AUTH_USERNAME: str | None = None
     OPENPROJECT_MCP_HTTP_AUTH_PASSWORD: SecretStr | None = None
 
+    # Direct Revit plugin socket bridge (no MCP proxy)
+    REVIT_PLUGIN_HOST: str = "127.0.0.1"
+    REVIT_PLUGIN_PORT: int = 8080
+    REVIT_PLUGIN_TIMEOUT_SECONDS: int = 90
+
     LANGCHAIN_TRACING_V2: bool = False
     LANGCHAIN_PROJECT: str = "default"
     LANGCHAIN_ENDPOINT: Annotated[str, BeforeValidator(check_str_is_http)] = (
