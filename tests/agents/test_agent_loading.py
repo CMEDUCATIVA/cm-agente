@@ -41,6 +41,11 @@ class TestAgentLoading:
         agent = get_agent("chatbot")
         assert agent is not None
 
+    def test_get_agent_sara_diseno_gpt(self):
+        """Test getting the Sara-Diseño-GPT agent."""
+        agent = get_agent("sara-diseno-gpt")
+        assert agent is not None
+
     def test_get_agent_lazy_agent_not_loaded(self):
         """Test getting a lazy agent that hasn't been loaded."""
         mock_agent = Mock(spec=LazyLoadingAgent)
