@@ -17,6 +17,7 @@ from agents.openproject_agent import openproject_agent
 from agents.rag_assistant import rag_assistant
 from agents.research_assistant import research_assistant
 from agents.personal_assistant import personal_assistant
+from agents.sara_diseno_gpt import sara_diseno_gpt
 from schema import AgentInfo
 
 DEFAULT_AGENT = "personal-assistant"
@@ -43,6 +44,10 @@ agents: dict[str, Agent] = {
     "openproject-agent": Agent(
         description="An OpenProject agent backed by an OpenProject MCP HTTP adapter.",
         graph_like=openproject_agent,
+    ),
+    "sara-diseno-gpt": Agent(
+        description="Agente de diseno para Revit con conexion directa al plugin.",
+        graph_like=sara_diseno_gpt,
     ),
     "research-assistant": Agent(
         description="A research assistant with web search and calculator.",
