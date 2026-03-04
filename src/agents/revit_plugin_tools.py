@@ -2,13 +2,41 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
-from core.revit_client import revit_plugin_client
+from core import settings
+from core.revit_bridge import RevitBridgeSessionNotFound, revit_bridge_manager
 
 
 async def _exec_revit_command(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = dict(params or {})
-    workstation_id = payload.pop("__workstation_id", None)
-    result = await revit_plugin_client.send_command(method, payload, workstation_id=workstation_id)
+    workstation_id = payload.pop("__workstation_id", None) or settings.REVIT_BRIDGE_DEFAULT_WORKSTATION_ID
+
+    # Map legacy RPC names to the websocket bridge method names used by the plugin.
+    method = {
+        "say_hello": "Revit_SayHello",
+        "get_current_view_elements": "Revit_GetCurrentViewElements",
+        "get_current_view_info": "Revit_GetCurrentViewInfo",
+        "get_selected_elements": "Revit_GetSelectedElements",
+        "delete_element": "Revit_DeleteElement",
+        "create_level": "Revit_CreateLevel",
+    }.get(method, method)
+
+    if not workstation_id:
+        sessions = await revit_bridge_manager.list_sessions()
+        if len(sessions) == 1:
+            workstation_id = str(sessions[0]["workstation_id"])
+        elif not sessions:
+            raise RevitBridgeSessionNotFound("No Revit bridge sessions are connected.")
+        else:
+            raise RevitBridgeSessionNotFound(
+                "Multiple Revit sessions connected. Set REVIT_BRIDGE_DEFAULT_WORKSTATION_ID or pass __workstation_id."
+            )
+
+    result = await revit_bridge_manager.send_command(
+        workstation_id=workstation_id,
+        method=method,
+        params=payload,
+        timeout_seconds=int(settings.REVIT_BRIDGE_COMMAND_TIMEOUT_SECONDS),
+    )
     return {"method": method, "result": result}
 
 
@@ -75,9 +103,11 @@ async def revit_tag_walls(params: dict[str, Any] | None = None) -> dict[str, Any
 
 @tool("Revit_DeleteElement")
 async def revit_delete_element(element_ids: list[int | str]) -> dict[str, Any]:
-    """Call delete_element with payload: {'elementIds': [...]}."""
-    payload = {"elementIds": [str(i) for i in element_ids]}
-    return await _exec_revit_command("delete_element", payload)
+    """Delete one element by id (uses first id when multiple are provided)."""
+    if not element_ids:
+        raise ValueError("element_ids is required")
+    payload = {"element_id": int(str(element_ids[0]))}
+    return await _exec_revit_command("Revit_DeleteElement", payload)
 
 
 @tool("Revit_AiElementFilter")
@@ -135,9 +165,36 @@ async def revit_tag_rooms(params: dict[str, Any] | None = None) -> dict[str, Any
 
 
 @tool("Revit_CreateLevel")
-async def revit_create_level(data: list[dict[str, Any]]) -> dict[str, Any]:
-    """Call create_level with payload: {'data': [...]}."""
-    return await _exec_revit_command("create_level", {"data": data})
+async def revit_create_level(
+    name: str | None = None,
+    elevation: float | None = None,
+    units: str = "m",
+    data: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """
+    Create a level.
+    Preferred args: name, elevation, units.
+    Backward compatible with data=[{"name": "...", "elevation": 12.3, "units": "m"}].
+    """
+    if data:
+        item = data[0] if data else {}
+        name = name or item.get("name") or item.get("level_name")
+        elevation = (
+            elevation
+            if elevation is not None
+            else item.get("elevation", item.get("elevation_m", item.get("elevationM")))
+        )
+        units = item.get("units", units)
+
+    if elevation is None:
+        elevation = 0.0
+
+    payload = {
+        "name": name or "New Level",
+        "elevation": float(elevation),
+        "units": str(units or "m"),
+    }
+    return await _exec_revit_command("Revit_CreateLevel", payload)
 
 
 @tool("Revit_SendCodeToRevit")
