@@ -124,14 +124,24 @@ async def revit_delete_element(element_ids: list[int | str]) -> dict[str, Any]:
 
 
 @tool("Revit_AiElementFilter")
-async def revit_ai_element_filter(params: dict[str, Any]) -> dict[str, Any]:
-    """Call ai_element_filter with raw params. Usually payload is {'data': {...}}."""
-    return await _exec_revit_command("ai_element_filter", params)
+async def revit_ai_element_filter(
+    category: str | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Call ai_element_filter with raw params. Supports category shortcut."""
+    payload = dict(params or {})
+    if category and "data" not in payload:
+        payload["data"] = {"category": category}
+    if not payload:
+        raise ValueError("params is required (example: {'data': {'category': 'Walls'}})")
+    return await _exec_revit_command("ai_element_filter", payload)
 
 
 @tool("Revit_OperateElement")
-async def revit_operate_element(data: dict[str, Any]) -> dict[str, Any]:
+async def revit_operate_element(data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Call operate_element with payload: {'data': {...}}."""
+    if not data:
+        raise ValueError("data is required (example: {'operation': 'delete', 'element_ids': [123]})")
     return await _exec_revit_command("operate_element", {"data": data})
 
 
@@ -183,8 +193,10 @@ async def revit_create_structural_framing_system(data: list[dict[str, Any]]) -> 
 
 
 @tool("Revit_CreateRoom")
-async def revit_create_room(data: list[dict[str, Any]]) -> dict[str, Any]:
+async def revit_create_room(data: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Call create_room with payload: {'data': [...]}."""
+    if not data:
+        raise ValueError("data is required and must include at least one room payload")
     return await _exec_revit_command("create_room", {"data": data})
 
 
