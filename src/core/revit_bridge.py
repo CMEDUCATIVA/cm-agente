@@ -105,7 +105,15 @@ class RevitBridgeManager:
             future = self._pending.get(command_id)
             if not future or future.done():
                 return
-            if bool(message.get("success", True)):
+            # Bridge clients may send either "success" or "ok" flags.
+            # Prefer explicit flags; default to success only when neither is present.
+            if "success" in message:
+                is_success = bool(message.get("success"))
+            elif "ok" in message:
+                is_success = bool(message.get("ok"))
+            else:
+                is_success = True
+            if is_success:
                 future.set_result(message.get("result"))
             else:
                 err = message.get("error") or "Unknown Revit plugin error"
@@ -113,4 +121,3 @@ class RevitBridgeManager:
 
 
 revit_bridge_manager = RevitBridgeManager()
-
