@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     REVIT_PLUGIN_HOST: str = "127.0.0.1"
     REVIT_PLUGIN_PORT: int = 8080
     REVIT_PLUGIN_TIMEOUT_SECONDS: int = 90
+    REVIT_BRIDGE_ENABLED: bool = True
+    REVIT_BRIDGE_AUTH_TOKEN: SecretStr | None = None
+    REVIT_BRIDGE_DEFAULT_WORKSTATION_ID: str | None = None
+    REVIT_BRIDGE_COMMAND_TIMEOUT_SECONDS: int = 120
 
     LANGCHAIN_TRACING_V2: bool = False
     LANGCHAIN_PROJECT: str = "default"
