@@ -6,7 +6,9 @@ from core.revit_client import revit_plugin_client
 
 
 async def _exec_revit_command(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    result = await revit_plugin_client.send_command(method, params or {})
+    payload = dict(params or {})
+    workstation_id = payload.pop("__workstation_id", None)
+    result = await revit_plugin_client.send_command(method, payload, workstation_id=workstation_id)
     return {"method": method, "result": result}
 
 
@@ -176,4 +178,3 @@ revit_plugin_tools: list[BaseTool] = [
     revit_send_code_to_revit,
     revit_create_dimensions,
 ]
-
