@@ -70,6 +70,22 @@ REPO_ROOT = BASE_DIR.parent
  
 
 
+def _humanize_revit_error(message: str) -> str:
+    text = (message or "").strip()
+    lower = text.lower()
+    if "3d views" in lower:
+        return "La acción no está soportada en vistas 3D. Cambia a una vista 2D (planta/alzado/sección)."
+    if "drawingsheet" in lower or "drawing sheet" in lower:
+        return "La acción no está soportada en láminas. Cambia a una vista de modelo 2D."
+    if "select at least two linear elements" in lower:
+        return "Selecciona al menos dos elementos lineales (muros/líneas/vigas) antes de crear cotas."
+    if "requested level" in lower and "was not found" in lower:
+        return "El nivel solicitado no existe. Usa el nombre exacto de un nivel existente."
+    if "unsupported bridge method" in lower:
+        return "El método solicitado no está implementado en el plugin de Revit."
+    return f"Error de Revit: {text}" if text else "Error de Revit no especificado."
+
+
 def custom_generate_unique_id(route: APIRoute) -> str:
     """Generate idiomatic operation IDs for OpenAPI client generation."""
     return route.name
@@ -271,6 +287,9 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
 
         output.run_id = str(run_id)
         return output
+    except RevitBridgeError as e:
+        logger.warning("Revit bridge error during /invoke: %s", e)
+        raise HTTPException(status_code=400, detail=_humanize_revit_error(str(e)))
     except Exception as e:
         logger.exception("An exception occurred during /invoke")
         raise HTTPException(status_code=500, detail="Unexpected error")
@@ -382,6 +401,9 @@ async def message_generator(
                     # that the model is asking for a tool to be invoked.
                     # So we only print non-empty content.
                     yield f"data: {json.dumps({'type': 'token', 'content': convert_message_content_to_string(content)})}\n\n"
+    except RevitBridgeError as e:
+        logger.warning("Revit bridge error in message generator: %s", e)
+        yield f"data: {json.dumps({'type': 'error', 'content': _humanize_revit_error(str(e))})}\n\n"
     except Exception as e:
         logger.exception("Error in message generator")
         yield f"data: {json.dumps({'type': 'error', 'content': 'Internal server error'})}\n\n"
