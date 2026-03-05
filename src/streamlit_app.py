@@ -742,6 +742,16 @@ async def draw_messages(
                             status.write(tool_call["args"])
                             tool_result: ChatMessage = await anext(messages_agen)
 
+                            if tool_result.type == "ai":
+                                # Some tool failures are surfaced as an AIMessage with "Error: ...".
+                                # Render it as tool output instead of crashing the UI.
+                                if is_new:
+                                    st.session_state.messages.append(tool_result)
+                                status.write("Output:")
+                                status.error(tool_result.content or "Error en la ejecución de la herramienta")
+                                status.update(state="error")
+                                continue
+
                             if tool_result.type != "tool":
                                 st.error(f"Unexpected ChatMessage type: {tool_result.type}")
                                 st.write(tool_result)
