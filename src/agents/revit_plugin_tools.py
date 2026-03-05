@@ -23,6 +23,7 @@ async def _exec_revit_command(method: str, params: dict[str, Any] | None = None)
         "tag_rooms": "Revit_TagRooms",
         "tag_walls": "Revit_TagWalls",
         "ai_element_filter": "Revit_AiElementFilter",
+        "get_element_by_id": "Revit_GetElementById",
         "operate_element": "Revit_OperateElement",
         "create_dimensions": "Revit_CreateDimensions",
         "send_code_to_revit": "Revit_SendCodeToRevit",
@@ -190,6 +191,20 @@ async def revit_ai_element_filter(
     return await _exec_revit_command("ai_element_filter", payload)
 
 
+@tool("Revit_GetElementById")
+async def revit_get_element_by_id(
+    element_id: int | str | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Get element info by id with a compact payload."""
+    payload = dict(params or {})
+    if element_id is not None:
+        payload.setdefault("element_id", int(str(element_id)))
+    if "element_id" not in payload:
+        raise ValueError("element_id is required")
+    return await _exec_revit_command("get_element_by_id", payload)
+
+
 @tool("Revit_OperateElement")
 async def revit_operate_element(data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Call operate_element with payload: {'data': {...}}."""
@@ -331,6 +346,7 @@ revit_plugin_tools: list[BaseTool] = [
     revit_tag_walls,
     revit_delete_element,
     revit_ai_element_filter,
+    revit_get_element_by_id,
     revit_operate_element,
     revit_export_room_data,
     revit_get_material_quantities,
