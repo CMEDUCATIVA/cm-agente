@@ -406,7 +406,9 @@ async def message_generator(
         yield f"data: {json.dumps({'type': 'error', 'content': _humanize_revit_error(str(e))})}\n\n"
     except Exception as e:
         logger.exception("Error in message generator")
-        yield f"data: {json.dumps({'type': 'error', 'content': 'Internal server error'})}\n\n"
+        # In local dev we need the concrete exception to debug tool-call failures.
+        detail = str(e).strip() or e.__class__.__name__
+        yield f"data: {json.dumps({'type': 'error', 'content': f'Internal server error: {detail}'})}\n\n"
     finally:
         yield "data: [DONE]\n\n"
 
