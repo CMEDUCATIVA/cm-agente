@@ -32,6 +32,9 @@ async def _exec_revit_command(method: str, params: dict[str, Any] | None = None)
         "create_surface_based_element": "Revit_CreateSurfaceBasedElement",
         "color_splash": "Revit_ColorSplash",
         "create_structural_framing_system": "Revit_CreateStructuralFramingSystem",
+        "create_wall": "Revit_CreateWall",
+        "create_floor": "Revit_CreateFloor",
+        "create_roof": "Revit_CreateRoof",
         "create_stair": "Revit_CreateStair",
         "get_stair_runs_landings": "Revit_GetStairRunsLandings",
         "create_stair_dimensions": "Revit_CreateStairDimensions",
@@ -273,6 +276,60 @@ async def revit_create_structural_framing_system(
     return await _exec_revit_command("create_structural_framing_system", payload)
 
 
+@tool("Revit_CreateWall")
+async def revit_create_wall(
+    data: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a wall from start/end points with optional level/type/height."""
+    payload = dict(params or {})
+    if data:
+        payload.setdefault("data", data)
+    if "data" not in payload:
+        raise ValueError(
+            "data is required (example: {'start':{'x':0,'y':0,'z':0,'units':'m'},'end':{'x':6,'y':0,'z':0,'units':'m'},'level':'Level 1','height':3,'units':'m'})"
+        )
+    if not isinstance(payload["data"], dict):
+        raise ValueError("data must be an object")
+    return await _exec_revit_command("create_wall", payload)
+
+
+@tool("Revit_CreateFloor")
+async def revit_create_floor(
+    data: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a floor from a closed polygon in points[]."""
+    payload = dict(params or {})
+    if data:
+        payload.setdefault("data", data)
+    if "data" not in payload:
+        raise ValueError(
+            "data is required (example: {'points':[{'x':0,'y':0,'z':0,'units':'m'},{'x':6,'y':0,'z':0,'units':'m'},{'x':6,'y':4,'z':0,'units':'m'},{'x':0,'y':4,'z':0,'units':'m'}],'level':'Level 1'})"
+        )
+    if not isinstance(payload["data"], dict):
+        raise ValueError("data must be an object")
+    return await _exec_revit_command("create_floor", payload)
+
+
+@tool("Revit_CreateRoof")
+async def revit_create_roof(
+    data: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a footprint roof from a closed polygon in points[]."""
+    payload = dict(params or {})
+    if data:
+        payload.setdefault("data", data)
+    if "data" not in payload:
+        raise ValueError(
+            "data is required (example: {'points':[{'x':0,'y':0,'z':3,'units':'m'},{'x':6,'y':0,'z':3,'units':'m'},{'x':6,'y':4,'z':3,'units':'m'},{'x':0,'y':4,'z':3,'units':'m'}],'level':'Level 2'})"
+        )
+    if not isinstance(payload["data"], dict):
+        raise ValueError("data must be an object")
+    return await _exec_revit_command("create_roof", payload)
+
+
 @tool("Revit_CreateStair")
 async def revit_create_stair(
     data: dict[str, Any] | None = None,
@@ -402,6 +459,9 @@ revit_plugin_tools: list[BaseTool] = [
     revit_analyze_model_statistics,
     revit_create_grid,
     revit_create_structural_framing_system,
+    revit_create_wall,
+    revit_create_floor,
+    revit_create_roof,
     revit_create_stair,
     revit_get_stair_runs_landings,
     revit_create_stair_dimensions,
