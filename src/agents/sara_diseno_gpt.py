@@ -45,7 +45,7 @@ def wrap_model(model: BaseChatModel) -> RunnableSerializable[AgentState, AIMessa
 
 
 def _drop_incomplete_tool_call_turns(messages: list[BaseMessage]) -> list[BaseMessage]:
-    """Remove malformed assistant tool-call turns that have missing ToolMessage responses."""
+    """Remove malformed or orphaned tool-call turns before sending history to the model."""
     cleaned: list[BaseMessage] = []
     pending_ids: set[str] = set()
     pending_block: list[BaseMessage] = []
@@ -58,6 +58,9 @@ def _drop_incomplete_tool_call_turns(messages: list[BaseMessage]) -> list[BaseMe
                 # If IDs are missing, the turn is already malformed; drop it.
                 if not pending_ids:
                     pending_block = []
+            elif isinstance(msg, ToolMessage):
+                # Orphan tool messages are invalid for OpenAI chat payloads.
+                continue
             else:
                 cleaned.append(msg)
             continue
