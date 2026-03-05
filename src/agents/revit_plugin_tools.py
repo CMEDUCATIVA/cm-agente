@@ -32,6 +32,9 @@ async def _exec_revit_command(method: str, params: dict[str, Any] | None = None)
         "create_surface_based_element": "Revit_CreateSurfaceBasedElement",
         "color_splash": "Revit_ColorSplash",
         "create_structural_framing_system": "Revit_CreateStructuralFramingSystem",
+        "create_stair": "Revit_CreateStair",
+        "get_stair_runs_landings": "Revit_GetStairRunsLandings",
+        "create_stair_dimensions": "Revit_CreateStairDimensions",
     }.get(method, method)
 
     if not workstation_id:
@@ -270,6 +273,52 @@ async def revit_create_structural_framing_system(
     return await _exec_revit_command("create_structural_framing_system", payload)
 
 
+@tool("Revit_CreateStair")
+async def revit_create_stair(
+    data: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a straight stair run between base/top levels."""
+    payload = dict(params or {})
+    if data:
+        payload.setdefault("data", data)
+    if "data" not in payload:
+        raise ValueError(
+            "data is required (example: {'base_level':'Level 1','top_level':'Level 2','start':{'x':0,'y':0,'z':0,'units':'m'},'end':{'x':3,'y':0,'z':0,'units':'m'},'width':1.2})"
+        )
+    if not isinstance(payload["data"], dict):
+        raise ValueError("data must be an object")
+    return await _exec_revit_command("create_stair", payload)
+
+
+@tool("Revit_GetStairRunsLandings")
+async def revit_get_stair_runs_landings(
+    stair_id: int | str | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Get run/landing ids for a stair."""
+    payload = dict(params or {})
+    if stair_id is not None:
+        payload.setdefault("stair_id", int(str(stair_id)))
+    if "stair_id" not in payload:
+        raise ValueError("stair_id is required")
+    return await _exec_revit_command("get_stair_runs_landings", payload)
+
+
+@tool("Revit_CreateStairDimensions")
+async def revit_create_stair_dimensions(
+    stair_id: int | str | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a dimension between first two runs of a stair when possible."""
+    payload = dict(params or {})
+    if stair_id is not None:
+        payload.setdefault("stair_id", int(str(stair_id)))
+    if "stair_id" not in payload:
+        raise ValueError("stair_id is required")
+    return await _exec_revit_command("create_stair_dimensions", payload)
+
+
 @tool("Revit_CreateRoom")
 async def revit_create_room(data: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Call create_room with payload: {'data': [...]}."""
@@ -353,6 +402,9 @@ revit_plugin_tools: list[BaseTool] = [
     revit_analyze_model_statistics,
     revit_create_grid,
     revit_create_structural_framing_system,
+    revit_create_stair,
+    revit_get_stair_runs_landings,
+    revit_create_stair_dimensions,
     revit_create_room,
     revit_tag_rooms,
     revit_create_level,
