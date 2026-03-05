@@ -26,6 +26,11 @@ async def _exec_revit_command(method: str, params: dict[str, Any] | None = None)
         "operate_element": "Revit_OperateElement",
         "create_dimensions": "Revit_CreateDimensions",
         "send_code_to_revit": "Revit_SendCodeToRevit",
+        "create_point_based_element": "Revit_CreatePointBasedElement",
+        "create_line_based_element": "Revit_CreateLineBasedElement",
+        "create_surface_based_element": "Revit_CreateSurfaceBasedElement",
+        "color_splash": "Revit_ColorSplash",
+        "create_structural_framing_system": "Revit_CreateStructuralFramingSystem",
     }.get(method, method)
 
     if not workstation_id:
@@ -93,27 +98,62 @@ async def revit_get_selected_elements(limit: int = 100) -> dict[str, Any]:
 
 
 @tool("Revit_CreatePointBasedElement")
-async def revit_create_point_based_element(data: list[dict[str, Any]]) -> dict[str, Any]:
+async def revit_create_point_based_element(
+    data: list[dict[str, Any]] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Call create_point_based_element with payload: {'data': [...]}."""
-    return await _exec_revit_command("create_point_based_element", {"data": data})
+    payload = dict(params or {})
+    if data:
+        payload["data"] = data
+    if "data" not in payload:
+        raise ValueError("data is required (example: [{'x':1,'y':1,'z':0,'units':'m'}])")
+    if not isinstance(payload["data"], list) or len(payload["data"]) == 0:
+        raise ValueError("data must be a non-empty list")
+    return await _exec_revit_command("create_point_based_element", payload)
 
 
 @tool("Revit_CreateLineBasedElement")
-async def revit_create_line_based_element(data: list[dict[str, Any]]) -> dict[str, Any]:
+async def revit_create_line_based_element(
+    data: list[dict[str, Any]] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Call create_line_based_element with payload: {'data': [...]}."""
-    return await _exec_revit_command("create_line_based_element", {"data": data})
+    payload = dict(params or {})
+    if data:
+        payload["data"] = data
+    if "data" not in payload:
+        raise ValueError("data is required (example: [{'start': {...}, 'end': {...}}])")
+    if not isinstance(payload["data"], list) or len(payload["data"]) == 0:
+        raise ValueError("data must be a non-empty list")
+    return await _exec_revit_command("create_line_based_element", payload)
 
 
 @tool("Revit_CreateSurfaceBasedElement")
-async def revit_create_surface_based_element(data: list[dict[str, Any]]) -> dict[str, Any]:
+async def revit_create_surface_based_element(
+    data: list[dict[str, Any]] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Call create_surface_based_element with payload: {'data': [...]}."""
-    return await _exec_revit_command("create_surface_based_element", {"data": data})
+    payload = dict(params or {})
+    if data:
+        payload["data"] = data
+    if "data" not in payload:
+        raise ValueError("data is required (example: [{'host_element_id': 123456}])")
+    if not isinstance(payload["data"], list) or len(payload["data"]) == 0:
+        raise ValueError("data must be a non-empty list")
+    return await _exec_revit_command("create_surface_based_element", payload)
 
 
 @tool("Revit_ColorSplash")
-async def revit_color_splash(params: dict[str, Any]) -> dict[str, Any]:
+async def revit_color_splash(params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Call color_splash with raw params."""
-    return await _exec_revit_command("color_splash", params)
+    payload = dict(params or {})
+    if not payload:
+        raise ValueError(
+            "params is required (example: {'data': {'category': 'Walls', 'color': '#FF6600', 'transparency': 20}})"
+        )
+    return await _exec_revit_command("color_splash", payload)
 
 
 @tool("Revit_TagWalls")
@@ -195,9 +235,19 @@ async def revit_create_grid(data: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 @tool("Revit_CreateStructuralFramingSystem")
-async def revit_create_structural_framing_system(data: list[dict[str, Any]]) -> dict[str, Any]:
+async def revit_create_structural_framing_system(
+    data: list[dict[str, Any]] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Call create_structural_framing_system with payload: {'data': [...]}."""
-    return await _exec_revit_command("create_structural_framing_system", {"data": data})
+    payload = dict(params or {})
+    if data:
+        payload["data"] = data
+    if "data" not in payload:
+        raise ValueError("data is required (example: [{'start': {...}, 'end': {...}, 'level': 'Level 1'}])")
+    if not isinstance(payload["data"], list) or len(payload["data"]) == 0:
+        raise ValueError("data must be a non-empty list")
+    return await _exec_revit_command("create_structural_framing_system", payload)
 
 
 @tool("Revit_CreateRoom")
