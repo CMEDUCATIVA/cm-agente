@@ -35,6 +35,7 @@ async def _exec_revit_command(method: str, params: dict[str, Any] | None = None)
         "create_wall": "Revit_CreateWall",
         "create_floor": "Revit_CreateFloor",
         "create_roof": "Revit_CreateRoof",
+        "get_roof_types": "Revit_GetRoofTypes",
         "create_stair": "Revit_CreateStair",
         "get_stair_runs_landings": "Revit_GetStairRunsLandings",
         "create_stair_dimensions": "Revit_CreateStairDimensions",
@@ -330,6 +331,20 @@ async def revit_create_roof(
     return await _exec_revit_command("create_roof", payload)
 
 
+@tool("Revit_GetRoofTypes")
+async def revit_get_roof_types(
+    limit: int = 200,
+    query: str | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """List roof types with optional text filter."""
+    payload = dict(params or {})
+    payload.setdefault("limit", max(1, min(int(limit), 2000)))
+    if query:
+        payload.setdefault("query", str(query))
+    return await _exec_revit_command("get_roof_types", payload)
+
+
 @tool("Revit_CreateStair")
 async def revit_create_stair(
     data: dict[str, Any] | None = None,
@@ -462,6 +477,7 @@ revit_plugin_tools: list[BaseTool] = [
     revit_create_wall,
     revit_create_floor,
     revit_create_roof,
+    revit_get_roof_types,
     revit_create_stair,
     revit_get_stair_runs_landings,
     revit_create_stair_dimensions,
