@@ -146,9 +146,14 @@ async def revit_create_surface_based_element(
 
 
 @tool("Revit_ColorSplash")
-async def revit_color_splash(params: dict[str, Any] | None = None) -> dict[str, Any]:
+async def revit_color_splash(
+    params: dict[str, Any] | None = None,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Call color_splash with raw params."""
     payload = dict(params or {})
+    if data is not None and "data" not in payload:
+        payload["data"] = data
     if not payload:
         raise ValueError(
             "params is required (example: {'data': {'category': 'Walls', 'color': '#FF6600', 'transparency': 20}})"
