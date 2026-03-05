@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
 from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -37,10 +37,50 @@ Rules:
 def wrap_model(model: BaseChatModel) -> RunnableSerializable[AgentState, AIMessage]:
     bound_model = model.bind_tools(revit_plugin_tools)
     preprocessor = RunnableLambda(
-        lambda state: [SystemMessage(content=instructions)] + state["messages"][-MAX_HISTORY_MESSAGES:],
+        lambda state: [SystemMessage(content=instructions)]
+        + _drop_incomplete_tool_call_turns(state["messages"][-MAX_HISTORY_MESSAGES:]),
         name="StateModifier",
     )
     return preprocessor | bound_model  # type: ignore[return-value]
+
+
+def _drop_incomplete_tool_call_turns(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Remove malformed assistant tool-call turns that have missing ToolMessage responses."""
+    cleaned: list[BaseMessage] = []
+    pending_ids: set[str] = set()
+    pending_block: list[BaseMessage] = []
+
+    for msg in messages:
+        if not pending_ids:
+            if isinstance(msg, AIMessage) and msg.tool_calls:
+                pending_ids = {str(tc.get("id") or "") for tc in msg.tool_calls if tc.get("id")}
+                pending_block = [msg]
+                # If IDs are missing, the turn is already malformed; drop it.
+                if not pending_ids:
+                    pending_block = []
+            else:
+                cleaned.append(msg)
+            continue
+
+        if isinstance(msg, ToolMessage) and msg.tool_call_id in pending_ids:
+            pending_block.append(msg)
+            pending_ids.remove(msg.tool_call_id)
+            if not pending_ids:
+                cleaned.extend(pending_block)
+                pending_block = []
+            continue
+
+        # Unexpected message before all tool IDs are resolved: drop the malformed turn.
+        pending_ids = set()
+        pending_block = []
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            pending_ids = {str(tc.get("id") or "") for tc in msg.tool_calls if tc.get("id")}
+            pending_block = [msg] if pending_ids else []
+        else:
+            cleaned.append(msg)
+
+    # If we end with unresolved IDs, drop that incomplete turn.
+    return cleaned
 
 
 async def acall_model(state: AgentState, config: RunnableConfig) -> AgentState:
@@ -51,7 +91,7 @@ async def acall_model(state: AgentState, config: RunnableConfig) -> AgentState:
 
 agent = StateGraph(AgentState)
 agent.add_node("model", acall_model)
-agent.add_node("tools", ToolNode(revit_plugin_tools))
+agent.add_node("tools", ToolNode(revit_plugin_tools, handle_tool_errors=True))
 agent.set_entry_point("model")
 
 
