@@ -18,6 +18,14 @@ async def _exec_revit_command(method: str, params: dict[str, Any] | None = None)
         "get_selected_elements": "Revit_GetSelectedElements",
         "delete_element": "Revit_DeleteElement",
         "create_level": "Revit_CreateLevel",
+        "create_grid": "Revit_CreateGrid",
+        "create_room": "Revit_CreateRoom",
+        "tag_rooms": "Revit_TagRooms",
+        "tag_walls": "Revit_TagWalls",
+        "ai_element_filter": "Revit_AiElementFilter",
+        "operate_element": "Revit_OperateElement",
+        "create_dimensions": "Revit_CreateDimensions",
+        "send_code_to_revit": "Revit_SendCodeToRevit",
     }.get(method, method)
 
     if not workstation_id:
@@ -247,9 +255,12 @@ async def revit_send_code_to_revit(code: str, parameters: list[Any] | None = Non
 
 
 @tool("Revit_CreateDimensions")
-async def revit_create_dimensions(data: list[dict[str, Any]]) -> dict[str, Any]:
-    """Call create_dimensions with payload: {'data': [...]}."""
-    return await _exec_revit_command("create_dimensions", {"data": data})
+async def revit_create_dimensions(data: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Call create_dimensions. If data is omitted, plugin uses current selection/context."""
+    payload: dict[str, Any] = {}
+    if data:
+        payload["data"] = data
+    return await _exec_revit_command("create_dimensions", payload)
 
 
 revit_plugin_tools: list[BaseTool] = [
